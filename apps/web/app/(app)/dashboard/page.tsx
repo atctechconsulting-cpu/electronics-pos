@@ -1,3 +1,9 @@
+"use client";
+
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/components/auth-provider";
+
 import {
   AlertTriangle,
   ArrowUpRight,
@@ -36,7 +42,15 @@ const stats = [
 ];
 
 export default function DashboardPage() {
-  return (
+  const router = useRouter();
+  const { organization, loading } = useAuth();
+  useEffect(() => {
+    if (!loading && !organization) {
+    router.push("/onboarding");
+  }
+}, [loading, organization, router]);
+  
+return (
     <div className="space-y-6">
       <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
         <div>

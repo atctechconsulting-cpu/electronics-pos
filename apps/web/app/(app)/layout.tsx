@@ -1,29 +1,20 @@
 "use client";
 
-import { ReactNode, useEffect, useState } from "react";
+import { ReactNode, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { AppSidebar } from "@/components/app-sidebar";
 import { AppHeader } from "@/components/app-header";
-import { supabase } from "@/lib/supabase/client";
+import { AuthProvider, useAuth } from "@/components/auth-provider";
 
-export default function AppLayout({ children }: { children: ReactNode }) {
+function ProtectedAppLayout({ children }: { children: ReactNode }) {
   const router = useRouter();
-  const [loading, setLoading] = useState(true);
+  const { user, loading } = useAuth();
 
   useEffect(() => {
-    async function checkSession() {
-      const { data } = await supabase.auth.getUser();
-
-      if (!data.user) {
-        router.push("/login");
-        return;
-      }
-
-      setLoading(false);
+    if (!loading && !user) {
+      router.push("/login");
     }
-
-    checkSession();
-  }, [router]);
+  }, [loading, user, router]);
 
   if (loading) {
     return (
@@ -31,6 +22,10 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         <p className="text-sm text-slate-500">Loading AlphaPOS...</p>
       </div>
     );
+  }
+
+  if (!user) {
+    return null;
   }
 
   return (
@@ -43,5 +38,13 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         <main className="flex-1 p-6">{children}</main>
       </div>
     </div>
+  );
+}
+
+export default function AppLayout({ children }: { children: ReactNode }) {
+  return (
+    <AuthProvider>
+      <ProtectedAppLayout>{children}</ProtectedAppLayout>
+    </AuthProvider>
   );
 }
