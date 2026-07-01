@@ -22,99 +22,31 @@ export default function OnboardingPage() {
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+async function handleSubmit(e: React.FormEvent) {
+  e.preventDefault();
 
-    if (!user) return;
+  if (!user) return;
 
-    setLoading(true);
-    setErrorMessage("");
+  setLoading(true);
+  setErrorMessage("");
 
-    const slug = slugify(businessName);
+  const slug = slugify(businessName);
 
-    const { data: organization, error: orgError } = await supabase
-      .from("organizations")
-      .insert({
-        name: businessName,
-        slug,
-      })
-      .select()
-      .single();
+  const { error } = await supabase.rpc("create_initial_business", {
+    business_name: businessName,
+    business_slug: slug,
+    branch_name: branchName,
+  });
 
-    if (orgError) {
-      setLoading(false);
-      setErrorMessage(orgError.message);
-      return;
-    }
-
-    const { data: branch, error: branchError } = await supabase
-      .from("branches")
-      .insert({
-        organization_id: organization.id,
-        name: branchName,
-        code: "MAIN",
-        is_head_office: true,
-      })
-      .select()
-      .single();
-
-    if (branchError) {
-      setLoading(false);
-      setErrorMessage(branchError.message);
-      return;
-    }
-
-    const { data: role, error: roleError } = await supabase
-      .from("roles")
-      .select("id")
-      .eq("name", "super_admin")
-      .single();
-
-    if (roleError) {
-      setLoading(false);
-      setErrorMessage(roleError.message);
-      return;
-    }
-
-    const { error: accessError } = await supabase.from("user_organizations").insert({
-      user_id: user.id,
-      organization_id: organization.id,
-      is_default: true,
-    });
-
-    if (accessError) {
-      setLoading(false);
-      setErrorMessage(accessError.message);
-      return;
-    }
-
-    const { error: branchAccessError } = await supabase.from("user_branches").insert({
-      user_id: user.id,
-      branch_id: branch.id,
-      is_default: true,
-    });
-
-    if (branchAccessError) {
-      setLoading(false);
-      setErrorMessage(branchAccessError.message);
-      return;
-    }
-
-    const { error: roleAccessError } = await supabase.from("user_roles").insert({
-      user_id: user.id,
-      role_id: role.id,
-      organization_id: organization.id,
-    });
-
-    if (roleAccessError) {
-      setLoading(false);
-      setErrorMessage(roleAccessError.message);
-      return;
-    }
-
-    router.push("/dashboard");
-    router.refresh();
+  if (error) {
+    setLoading(false);
+    setErrorMessage(error.message);
+    return;
   }
+
+  router.push("/dashboard");
+  router.refresh();
+}
 
   return (
     <div className="mx-auto flex min-h-[70vh] max-w-xl items-center">
