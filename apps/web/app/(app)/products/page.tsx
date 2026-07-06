@@ -28,10 +28,25 @@ export default function ProductsPage() {
     loadProducts();
   }, [organization]);
 
-  const filteredProducts = products.filter((product) =>
-    product.name.toLowerCase().includes(search.toLowerCase()) ||
-    product.sku.toLowerCase().includes(search.toLowerCase())
+const filteredProducts = products.filter((product) => {
+  const query = search.toLowerCase().trim();
+
+  if (!query) return true;
+
+  const productName = product.name?.toLowerCase() ?? "";
+  const sku = product.sku?.toLowerCase() ?? "";
+  const barcode = product.barcode?.toLowerCase() ?? "";
+  const category = product.categories?.name?.toLowerCase() ?? "";
+  const brand = product.brands?.name?.toLowerCase() ?? "";
+
+  return (
+    productName.includes(query) ||
+    sku.includes(query) ||
+    barcode.includes(query) ||
+    category.includes(query) ||
+    brand.includes(query)
   );
+});
 
   return (
     <div className="space-y-6">

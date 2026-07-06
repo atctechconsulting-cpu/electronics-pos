@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Plus } from "lucide-react";
 import { createProduct } from "@/lib/services/products";
 import { useAuth } from "@/components/auth-provider";
+import { getBrandOptions, getCategoryOptions } from "@/lib/services/lookups";
 
 type ProductDialogProps = {
   onProductCreated: () => void;
@@ -11,16 +12,19 @@ type ProductDialogProps = {
 
 export function ProductDialog({ onProductCreated }: ProductDialogProps) {
   const { organization } = useAuth();
-
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [categories, setCategories] = useState<any[]>([]);
+  const [brands, setBrands] = useState<any[]>([]);
 
   const [form, setForm] = useState({
     name: "",
     sku: "",
     barcode: "",
     description: "",
+    category_id: "",
+    brand_id: "",
     cost_price: 0,
     retail_price: 0,
     wholesale_price: 0,
@@ -31,6 +35,24 @@ export function ProductDialog({ onProductCreated }: ProductDialogProps) {
     is_active: true,
     is_featured: false,
   });
+
+  useEffect(() => {
+  async function loadOptions() {
+    if (!organization) return;
+
+    const [categoryData, brandData] = await Promise.all([
+      getCategoryOptions(organization.id),
+      getBrandOptions(organization.id),
+    ]);
+
+    setCategories(categoryData ?? []);
+    setBrands(brandData ?? []);
+  }
+
+  if (open) {
+    loadOptions();
+  }
+}, [open, organization]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -46,12 +68,12 @@ export function ProductDialog({ onProductCreated }: ProductDialogProps) {
     try {
       await createProduct({
         organization_id: organization.id,
-        category_id: null,
-        brand_id: null,
+        category_id: form.category_id || null,
+        brand_id: form.brand_id || null,
         supplier_id: null,
         main_image_url: null,
         ...form,
-      });
+    });
 
       setOpen(false);
       setForm({
@@ -59,6 +81,8 @@ export function ProductDialog({ onProductCreated }: ProductDialogProps) {
         sku: "",
         barcode: "",
         description: "",
+        category_id: "",
+        brand_id: "",
         cost_price: 0,
         retail_price: 0,
         wholesale_price: 0,
@@ -206,6 +230,30 @@ export function ProductDialog({ onProductCreated }: ProductDialogProps) {
                   }
                 />
               </div>
+
+              <div><label className="text-sm font-medium">Category</label>
+                    <select className="mt-1 w-full rounded-lg border px-3 py-2" 
+                        value={form.category_id} 
+                        onChange={(e) => setForm({ ...form, category_id: e.target.value })}>
+                        <option value="">No category</option>
+                        {categories.map((category) => (
+                            <option key={category.id} value={category.id}>
+                                {category.name}
+                            </option>))}
+                    </select>
+                </div>
+                <div>
+                    <label className="text-sm font-medium">Brand</label>
+                    <select className="mt-1 w-full rounded-lg border px-3 py-2" 
+                        value={form.brand_id}
+                        onChange={(e) => setForm({ ...form, brand_id: e.target.value })}>
+                            <option value="">No brand</option>
+                            {brands.map((brand) => (
+                                <option key={brand.id} value={brand.id}>
+                                    {brand.name}
+                                </option>))}
+                    </select>
+                </div>
 
               <div className="grid gap-3 md:grid-cols-3">
                 <label className="flex items-center gap-2 text-sm">
