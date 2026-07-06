@@ -11,12 +11,14 @@ import {
   ShoppingCart,
   Users,
   Wrench,
+  Tags,
 } from "lucide-react";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: Home },
   { href: "/pos", label: "POS", icon: ShoppingCart },
   { href: "/products", label: "Products", icon: Package },
+  { href: "/categories", label: "Categories", icon: Tags },
   { href: "/inventory", label: "Inventory", icon: Boxes },
   { href: "/customers", label: "Customers", icon: Users },
   { href: "/suppliers", label: "Suppliers", icon: Building2 },

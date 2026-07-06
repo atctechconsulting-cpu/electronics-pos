@@ -6,7 +6,7 @@ import { getProducts } from "@/lib/services/products";
 import { useAuth } from "@/components/auth-provider";
 import { ProductDialog } from "@/components/products/product-dialog";
 import { EditProductDialog } from "@/components/products/edit-product-dialog";
-
+import { DeactivateProductButton } from "@/components/products/deactivate-product-button";
 
 export default function ProductsPage() {
   const { organization } = useAuth();
@@ -100,15 +100,25 @@ export default function ProductsPage() {
                     </td>
                     <td className="p-4">£{product.retail_price}</td>
                     <td className="p-4">
-                      <span className="rounded-full bg-green-50 px-2 py-1 text-xs font-medium text-green-700">
-                        {product.is_active ? "Active" : "Inactive"}
-                      </span>
+                      <span className={`rounded-full px-2 py-1 text-xs font-medium ${
+                            product.is_active ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"
+                            }`}
+                        >
+                            {product.is_active ? "Active" : "Inactive"}
+                        </span>
                     </td>
                     <td className="p-4">
-                        <EditProductDialog
-                            product={product}
-                            onProductUpdated={loadProducts}
-                        />
+                        <div className="flex gap-2">
+                            <EditProductDialog
+                                product={product}
+                                onProductUpdated={loadProducts}
+                            />
+                            {product.is_active && (<DeactivateProductButton
+                                productId={product.id}
+                                onSuccess={loadProducts}
+                            />
+                            )}
+                        </div>
                     </td>
                   </tr>
                 ))
