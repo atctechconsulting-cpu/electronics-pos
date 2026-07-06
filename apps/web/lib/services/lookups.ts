@@ -25,3 +25,16 @@ export async function getBrandOptions(organizationId: string) {
 
   return data;
 }
+
+export async function getSupplierOptions(organizationId: string) {
+  const { data, error } = await supabase
+    .from("suppliers")
+    .select("id, name")
+    .eq("organization_id", organizationId)
+    .eq("is_active", true)
+    .order("name");
+
+  if (error) throw error;
+
+  return data;
+}

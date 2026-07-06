@@ -1,8 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Pencil } from "lucide-react";
 import { updateProduct } from "@/lib/services/products";
+import { useAuth } from "@/components/auth-provider";
+import {
+  getBrandOptions,
+  getCategoryOptions,
+  getSupplierOptions,
+} from "@/lib/services/lookups";
 
 type EditProductDialogProps = {
   product: any;
@@ -16,12 +22,16 @@ export function EditProductDialog({
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const { organization } = useAuth();
+  const [categories, setCategories] = useState<any[]>([]);
+  const [brands, setBrands] = useState<any[]>([]);
+  const [suppliers, setSuppliers] = useState<any[]>([]);
 
   const [form, setForm] = useState({
     organization_id: product.organization_id,
-    category_id: product.category_id ?? null,
-    brand_id: product.brand_id ?? null,
-    supplier_id: product.supplier_id ?? null,
+    category_id: product.category_id ?? "",
+    brand_id: product.brand_id ?? "",
+    supplier_id: product.supplier_id ?? "",
     name: product.name ?? "",
     sku: product.sku ?? "",
     barcode: product.barcode ?? "",
@@ -38,6 +48,26 @@ export function EditProductDialog({
     is_featured: Boolean(product.is_featured),
   });
 
+  useEffect(() => {
+  async function loadOptions() {
+    if (!organization) return;
+
+    const [categoryData, brandData, supplierData] = await Promise.all([
+      getCategoryOptions(organization.id),
+      getBrandOptions(organization.id),
+      getSupplierOptions(organization.id),
+    ]);
+
+    setCategories(categoryData ?? []);
+    setBrands(brandData ?? []);
+    setSuppliers(supplierData ?? []);
+  }
+
+  if (open) {
+    loadOptions();
+  }
+}, [open, organization]);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
@@ -45,7 +75,12 @@ export function EditProductDialog({
     setErrorMessage("");
 
     try {
-      await updateProduct(product.id, form);
+      await updateProduct(product.id, {
+        ...form,
+        category_id: form.category_id || null,
+        brand_id: form.brand_id || null,
+        supplier_id: form.supplier_id || null,
+    });
       setOpen(false);
       onProductUpdated();
     } catch (error: any) {
@@ -100,6 +135,60 @@ export function EditProductDialog({
                     required
                   />
                 </div>
+
+                <div>
+  <label className="text-sm font-medium">Category</label>
+  <select
+    className="mt-1 w-full rounded-lg border px-3 py-2"
+    value={form.category_id ?? ""}
+    onChange={(e) =>
+      setForm({ ...form, category_id: e.target.value })
+    }
+  >
+    <option value="">No category</option>
+    {categories.map((category) => (
+      <option key={category.id} value={category.id}>
+        {category.name}
+      </option>
+    ))}
+  </select>
+</div>
+
+<div>
+  <label className="text-sm font-medium">Brand</label>
+  <select
+    className="mt-1 w-full rounded-lg border px-3 py-2"
+    value={form.brand_id ?? ""}
+    onChange={(e) =>
+      setForm({ ...form, brand_id: e.target.value })
+    }
+  >
+    <option value="">No brand</option>
+    {brands.map((brand) => (
+      <option key={brand.id} value={brand.id}>
+        {brand.name}
+      </option>
+    ))}
+  </select>
+</div>
+
+<div>
+  <label className="text-sm font-medium">Supplier</label>
+  <select
+    className="mt-1 w-full rounded-lg border px-3 py-2"
+    value={form.supplier_id ?? ""}
+    onChange={(e) =>
+      setForm({ ...form, supplier_id: e.target.value })
+    }
+  >
+    <option value="">No supplier</option>
+    {suppliers.map((supplier) => (
+      <option key={supplier.id} value={supplier.id}>
+        {supplier.name}
+      </option>
+    ))}
+  </select>
+</div>
 
                 <div>
                   <label className="text-sm font-medium">Barcode</label>
