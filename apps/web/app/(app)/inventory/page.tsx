@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Package, Search } from "lucide-react";
 import { useAuth } from "@/components/auth-provider";
 import { getInventory } from "@/lib/services/inventory";
+import { ReceiveStockDialog } from "@/components/inventory/receive-stock-dialog";
 
 export default function InventoryPage() {
   const { organization, branch } = useAuth();
@@ -55,10 +56,7 @@ export default function InventoryPage() {
           </p>
         </div>
 
-        <button className="inline-flex items-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800">
-          <Package className="mr-2 h-4 w-4" />
-          Receive Stock
-        </button>
+        <ReceiveStockDialog onSuccess={loadInventory} />
       </div>
 
       <div className="rounded-xl border bg-white shadow-sm">
