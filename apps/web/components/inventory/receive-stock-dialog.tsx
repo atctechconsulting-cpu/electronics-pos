@@ -26,6 +26,7 @@ export function ReceiveStockDialog({
     unit_cost: 0,
     reference: "",
     notes: "",
+    serial_numbers: [] as string[],
   });
 
   useEffect(() => {
@@ -51,6 +52,22 @@ if (open) {
   return product.supplier_id === form.supplier_id;
 });
 
+const selectedProduct = products.find(
+  (product) => product.id === form.product_id
+);
+
+const needsSerialInputs =
+  selectedProduct?.requires_imei || selectedProduct?.is_serialized;
+
+const serialLabel = selectedProduct?.requires_imei
+  ? "IMEI"
+  : "Serial Number";
+
+const serialInputs = Array.from(
+  { length: Number(form.quantity || 0) },
+  (_, index) => index
+);
+
   async function handleSubmit(
     e: React.FormEvent
   ) {
@@ -60,6 +77,16 @@ if (open) {
 
     setLoading(true);
 
+    if (needsSerialInputs) {
+  const completedSerials = form.serial_numbers.filter(Boolean);
+
+  if (completedSerials.length !== Number(form.quantity)) {
+    alert(`Please enter ${Number(form.quantity)} ${serialLabel} values.`);
+    setLoading(false);
+    return;
+  }
+}
+
     await receiveStock({
       organization_id: organization.id,
       branch_id: branch.id,
@@ -68,6 +95,9 @@ if (open) {
       unit_cost: Number(form.unit_cost),
       reference: form.reference,
       notes: form.notes,
+      serial_numbers: form.serial_numbers,
+requires_imei: Boolean(selectedProduct?.requires_imei),
+is_serialized: Boolean(selectedProduct?.is_serialized),
     });
 
     setLoading(false);
@@ -82,6 +112,7 @@ if (open) {
       unit_cost: 0,
       reference: "",
       notes: "",
+      serial_numbers: [],
     });
   }
 
@@ -162,9 +193,18 @@ if (open) {
         min="1"
         className="mt-1 w-full rounded-lg border px-3 py-2"
         value={form.quantity}
-        onChange={(e) =>
-          setForm({ ...form, quantity: Number(e.target.value) })
-        }
+        onChange={(e) => {
+  const quantity = Number(e.target.value);
+
+  setForm({
+    ...form,
+    quantity,
+    serial_numbers: Array.from(
+      { length: quantity },
+      (_, index) => form.serial_numbers[index] ?? ""
+    ),
+  });
+}}
         required
       />
     </div>
@@ -215,6 +255,41 @@ if (open) {
       placeholder="Optional notes about this stock receipt"
     />
   </div>
+
+  {needsSerialInputs && (
+  <div className="rounded-lg border bg-slate-50 p-4">
+    <p className="text-sm font-medium text-slate-900">
+      {serialLabel} Details
+    </p>
+    <p className="mt-1 text-xs text-slate-500">
+      Enter one {serialLabel.toLowerCase()} for each unit received.
+    </p>
+
+    <div className="mt-4 grid gap-3 md:grid-cols-2">
+      {serialInputs.map((index) => (
+        <div key={index}>
+          <label className="text-xs font-medium text-slate-600">
+            {serialLabel} {index + 1}
+          </label>
+          <input
+            className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+            value={form.serial_numbers[index] ?? ""}
+            onChange={(e) => {
+              const nextSerials = [...form.serial_numbers];
+              nextSerials[index] = e.target.value;
+
+              setForm({
+                ...form,
+                serial_numbers: nextSerials,
+              });
+            }}
+            required
+          />
+        </div>
+      ))}
+    </div>
+  </div>
+)}
 
   <div className="rounded-lg bg-slate-50 p-4">
     <p className="text-sm font-medium text-slate-700">

@@ -8,6 +8,8 @@ export async function getInventoryProducts(organizationId: string) {
       name,
       sku,
       supplier_id,
+      is_serialized,
+      requires_imei,
       suppliers:supplier_id (
         id,
         name
