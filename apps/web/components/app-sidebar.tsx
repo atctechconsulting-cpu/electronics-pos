@@ -13,6 +13,7 @@ import {
   Wrench,
   Tags,
   BadgeCheck,
+  ArrowRightLeft,
 } from "lucide-react";
 
 const navItems = [
@@ -22,6 +23,11 @@ const navItems = [
   { href: "/categories", label: "Categories", icon: Tags },
   { href: "/brands", label: "Brands", icon: BadgeCheck },
   { href: "/inventory", label: "Inventory", icon: Boxes },
+  {
+  href: "/stock-movements",
+  label: "Stock Movements",
+  icon: ArrowRightLeft,
+},
   { href: "/customers", label: "Customers", icon: Users },
   { href: "/suppliers", label: "Suppliers", icon: Building2 },
   { href: "/purchases", label: "Purchases", icon: Receipt },
