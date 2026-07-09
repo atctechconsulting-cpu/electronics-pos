@@ -37,7 +37,9 @@ export default function SignupPage() {
       return;
     }
 
-    setMessage("Account created. Please check your email to confirm your account.");
+    setMessage(
+      "Account created. Please check your email to confirm your account."
+    );
   }
 
   return (
@@ -50,7 +52,9 @@ export default function SignupPage() {
 
         <form onSubmit={handleSignup} className="mt-8 space-y-4">
           <div>
-            <label className="text-sm font-medium text-slate-700">Full name</label>
+            <label className="text-sm font-medium text-slate-700">
+              Full name
+            </label>
             <input
               className="mt-1 w-full rounded-lg border px-3 py-2 text-slate-900"
               value={fullName}
@@ -71,7 +75,9 @@ export default function SignupPage() {
           </div>
 
           <div>
-            <label className="text-sm font-medium text-slate-700">Password</label>
+            <label className="text-sm font-medium text-slate-700">
+              Password
+            </label>
             <input
               type="password"
               className="mt-1 w-full rounded-lg border px-3 py-2 text-slate-900"
@@ -83,7 +89,9 @@ export default function SignupPage() {
           </div>
 
           {message && <p className="text-sm text-green-600">{message}</p>}
-          {errorMessage && <p className="text-sm text-red-600">{errorMessage}</p>}
+          {errorMessage && (
+            <p className="text-sm text-red-600">{errorMessage}</p>
+          )}
 
           <button
             type="submit"

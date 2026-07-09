@@ -40,24 +40,24 @@ export function ProductDialog({ onProductCreated }: ProductDialogProps) {
   });
 
   useEffect(() => {
-  async function loadOptions() {
-    if (!organization) return;
+    async function loadOptions() {
+      if (!organization) return;
 
-const [categoryData, brandData, supplierData] = await Promise.all([
-  getCategoryOptions(organization.id),
-  getBrandOptions(organization.id),
-  getSupplierOptions(organization.id),
-]);
+      const [categoryData, brandData, supplierData] = await Promise.all([
+        getCategoryOptions(organization.id),
+        getBrandOptions(organization.id),
+        getSupplierOptions(organization.id),
+      ]);
 
-setCategories(categoryData ?? []);
-setBrands(brandData ?? []);
-setSuppliers(supplierData ?? []);
-  }
+      setCategories(categoryData ?? []);
+      setBrands(brandData ?? []);
+      setSuppliers(supplierData ?? []);
+    }
 
-  if (open) {
-    loadOptions();
-  }
-}, [open, organization]);
+    if (open) {
+      loadOptions();
+    }
+  }, [open, organization]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -78,7 +78,7 @@ setSuppliers(supplierData ?? []);
         supplier_id: form.supplier_id || null,
         main_image_url: null,
         ...form,
-    });
+      });
 
       setOpen(false);
       setForm({
@@ -137,9 +137,7 @@ setSuppliers(supplierData ?? []);
                   <input
                     className="mt-1 w-full rounded-lg border px-3 py-2"
                     value={form.name}
-                    onChange={(e) =>
-                      setForm({ ...form, name: e.target.value })
-                    }
+                    onChange={(e) => setForm({ ...form, name: e.target.value })}
                     required
                   />
                 </div>
@@ -149,9 +147,7 @@ setSuppliers(supplierData ?? []);
                   <input
                     className="mt-1 w-full rounded-lg border px-3 py-2"
                     value={form.sku}
-                    onChange={(e) =>
-                      setForm({ ...form, sku: e.target.value })
-                    }
+                    onChange={(e) => setForm({ ...form, sku: e.target.value })}
                     required
                   />
                 </div>
@@ -237,55 +233,63 @@ setSuppliers(supplierData ?? []);
                 />
               </div>
 
-              <div><label className="text-sm font-medium">Category</label>
-                    <select className="mt-1 w-full rounded-lg border px-3 py-2" 
-                        value={form.category_id} 
-                        onChange={(e) => setForm({ ...form, category_id: e.target.value })}>
-                        <option value="">No category</option>
-                        {categories.map((category) => (
-                            <option key={category.id} value={category.id}>
-                                {category.name}
-                            </option>))}
-                    </select>
-                </div>
-                <div>
-                    <label className="text-sm font-medium">Brand</label>
-                    <select className="mt-1 w-full rounded-lg border px-3 py-2" 
-                        value={form.brand_id}
-                        onChange={(e) => setForm({ ...form, brand_id: e.target.value })}>
-                            <option value="">No brand</option>
-                            {brands.map((brand) => (
-                                <option key={brand.id} value={brand.id}>
-                                    {brand.name}
-                                </option>))}
-                    </select>
-                </div>
+              <div>
+                <label className="text-sm font-medium">Category</label>
+                <select
+                  className="mt-1 w-full rounded-lg border px-3 py-2"
+                  value={form.category_id}
+                  onChange={(e) =>
+                    setForm({ ...form, category_id: e.target.value })
+                  }
+                >
+                  <option value="">No category</option>
+                  {categories.map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {category.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-sm font-medium">Brand</label>
+                <select
+                  className="mt-1 w-full rounded-lg border px-3 py-2"
+                  value={form.brand_id}
+                  onChange={(e) =>
+                    setForm({ ...form, brand_id: e.target.value })
+                  }
+                >
+                  <option value="">No brand</option>
+                  {brands.map((brand) => (
+                    <option key={brand.id} value={brand.id}>
+                      {brand.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-                <div>
-  <label className="text-sm font-medium">Supplier</label>
+              <div>
+                <label className="text-sm font-medium">Supplier</label>
 
-  <select
-    className="mt-1 w-full rounded-lg border px-3 py-2"
-    value={form.supplier_id}
-    onChange={(e) =>
-      setForm({
-        ...form,
-        supplier_id: e.target.value,
-      })
-    }
-  >
-    <option value="">No supplier</option>
+                <select
+                  className="mt-1 w-full rounded-lg border px-3 py-2"
+                  value={form.supplier_id}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      supplier_id: e.target.value,
+                    })
+                  }
+                >
+                  <option value="">No supplier</option>
 
-    {suppliers.map((supplier) => (
-      <option
-        key={supplier.id}
-        value={supplier.id}
-      >
-        {supplier.name}
-      </option>
-    ))}
-  </select>
-</div>
+                  {suppliers.map((supplier) => (
+                    <option key={supplier.id} value={supplier.id}>
+                      {supplier.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
               <div className="grid gap-3 md:grid-cols-3">
                 <label className="flex items-center gap-2 text-sm">

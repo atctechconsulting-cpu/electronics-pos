@@ -146,9 +146,7 @@ export default function SuppliersPage() {
             className="w-full rounded-lg border px-3 py-2"
             placeholder="Contact name"
             value={form.contact_name}
-            onChange={(e) =>
-              setForm({ ...form, contact_name: e.target.value })
-            }
+            onChange={(e) => setForm({ ...form, contact_name: e.target.value })}
           />
 
           <input

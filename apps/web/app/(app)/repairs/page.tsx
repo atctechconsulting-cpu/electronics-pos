@@ -11,9 +11,7 @@ export default function Page() {
       </div>
 
       <div className="rounded-xl border bg-white p-8 shadow-sm">
-        <p className="text-sm text-slate-500">
-          Repairs workspace coming soon.
-        </p>
+        <p className="text-sm text-slate-500">Repairs workspace coming soon.</p>
       </div>
     </div>
   );

@@ -16,10 +16,7 @@ export default function StockMovementsPage() {
 
     setLoading(true);
 
-    const data = await getStockMovements(
-      organization.id,
-      branch.id
-    );
+    const data = await getStockMovements(organization.id, branch.id);
 
     setMovements(data ?? []);
     setLoading(false);
@@ -31,11 +28,8 @@ export default function StockMovementsPage() {
 
   return (
     <div className="space-y-6">
-
       <div>
-        <h1 className="text-2xl font-bold">
-          Stock Movements
-        </h1>
+        <h1 className="text-2xl font-bold">Stock Movements</h1>
 
         <p className="text-sm text-slate-500">
           Complete audit trail of inventory transactions.
@@ -43,13 +37,9 @@ export default function StockMovementsPage() {
       </div>
 
       <div className="rounded-xl border bg-white shadow-sm">
-
         <table className="w-full text-sm">
-
           <thead className="bg-slate-50">
-
             <tr>
-
               <th className="p-4 text-left">Date</th>
 
               <th className="p-4 text-left">Type</th>
@@ -61,84 +51,50 @@ export default function StockMovementsPage() {
               <th className="p-4 text-left">Cost</th>
 
               <th className="p-4 text-left">Reference</th>
-
             </tr>
-
           </thead>
 
           <tbody>
-
             {loading ? (
-
               <tr>
                 <td colSpan={6} className="p-8 text-center">
                   Loading...
                 </td>
               </tr>
-
             ) : movements.length === 0 ? (
-
               <tr>
                 <td colSpan={6} className="p-8 text-center text-slate-500">
                   No stock movements yet.
                 </td>
               </tr>
-
             ) : (
-
               movements.map((movement) => (
-
-                <tr
-                  key={movement.id}
-                  className="border-t"
-                >
-
+                <tr key={movement.id} className="border-t">
                   <td className="p-4">
-                    {new Date(
-                      movement.created_at
-                    ).toLocaleString()}
+                    {new Date(movement.created_at).toLocaleString()}
                   </td>
 
                   <td className="p-4">
-
                     <span className="inline-flex items-center rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
-
-                      <ArrowRightLeft className="mr-1 h-3 w-3"/>
+                      <ArrowRightLeft className="mr-1 h-3 w-3" />
 
                       {movement.movement_type}
-
                     </span>
-
                   </td>
 
-                  <td className="p-4 font-medium">
-                    {movement.products?.name}
-                  </td>
+                  <td className="p-4 font-medium">{movement.products?.name}</td>
 
-                  <td className="p-4">
-                    {movement.quantity}
-                  </td>
+                  <td className="p-4">{movement.quantity}</td>
 
-                  <td className="p-4">
-                    £{movement.unit_cost}
-                  </td>
+                  <td className="p-4">£{movement.unit_cost}</td>
 
-                  <td className="p-4">
-                    {movement.reference}
-                  </td>
-
+                  <td className="p-4">{movement.reference}</td>
                 </tr>
-
               ))
-
             )}
-
           </tbody>
-
         </table>
-
       </div>
-
     </div>
   );
 }

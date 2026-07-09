@@ -14,39 +14,38 @@ export default function ProductsPage() {
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
 
+  async function loadProducts() {
+    if (!organization) return;
 
-    async function loadProducts() {
-      if (!organization) return;
+    setLoading(true);
+    const data = await getProducts(organization.id);
+    setProducts(data ?? []);
+    setLoading(false);
+  }
 
-      setLoading(true);
-      const data = await getProducts(organization.id);
-      setProducts(data ?? []);
-      setLoading(false);
-    }
-
-    useEffect(() => {
+  useEffect(() => {
     loadProducts();
   }, [organization]);
 
-const filteredProducts = products.filter((product) => {
-  const query = search.toLowerCase().trim();
+  const filteredProducts = products.filter((product) => {
+    const query = search.toLowerCase().trim();
 
-  if (!query) return true;
+    if (!query) return true;
 
-  const productName = product.name?.toLowerCase() ?? "";
-  const sku = product.sku?.toLowerCase() ?? "";
-  const barcode = product.barcode?.toLowerCase() ?? "";
-  const category = product.categories?.name?.toLowerCase() ?? "";
-  const brand = product.brands?.name?.toLowerCase() ?? "";
+    const productName = product.name?.toLowerCase() ?? "";
+    const sku = product.sku?.toLowerCase() ?? "";
+    const barcode = product.barcode?.toLowerCase() ?? "";
+    const category = product.categories?.name?.toLowerCase() ?? "";
+    const brand = product.brands?.name?.toLowerCase() ?? "";
 
-  return (
-    productName.includes(query) ||
-    sku.includes(query) ||
-    barcode.includes(query) ||
-    category.includes(query) ||
-    brand.includes(query)
-  );
-});
+    return (
+      productName.includes(query) ||
+      sku.includes(query) ||
+      barcode.includes(query) ||
+      category.includes(query) ||
+      brand.includes(query)
+    );
+  });
 
   return (
     <div className="space-y-6">
@@ -59,7 +58,9 @@ const filteredProducts = products.filter((product) => {
             Manage your product catalogue.
           </p>
         </div>
-        <ProductDialog onProductCreated={() => organization && loadProducts()} />
+        <ProductDialog
+          onProductCreated={() => organization && loadProducts()}
+        />
       </div>
 
       <div className="rounded-xl border bg-white shadow-sm">
@@ -107,33 +108,33 @@ const filteredProducts = products.filter((product) => {
                       {product.name}
                     </td>
                     <td className="p-4">{product.sku}</td>
-                    <td className="p-4">
-                      {product.categories?.name ?? "-"}
-                    </td>
-                    <td className="p-4">
-                      {product.brands?.name ?? "-"}
-                    </td>
+                    <td className="p-4">{product.categories?.name ?? "-"}</td>
+                    <td className="p-4">{product.brands?.name ?? "-"}</td>
                     <td className="p-4">£{product.retail_price}</td>
                     <td className="p-4">
-                      <span className={`rounded-full px-2 py-1 text-xs font-medium ${
-                            product.is_active ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"
-                            }`}
-                        >
-                            {product.is_active ? "Active" : "Inactive"}
-                        </span>
+                      <span
+                        className={`rounded-full px-2 py-1 text-xs font-medium ${
+                          product.is_active
+                            ? "bg-green-50 text-green-700"
+                            : "bg-red-50 text-red-700"
+                        }`}
+                      >
+                        {product.is_active ? "Active" : "Inactive"}
+                      </span>
                     </td>
                     <td className="p-4">
-                        <div className="flex gap-2">
-                            <EditProductDialog
-                                product={product}
-                                onProductUpdated={loadProducts}
-                            />
-                            {product.is_active && (<DeactivateProductButton
-                                productId={product.id}
-                                onSuccess={loadProducts}
-                            />
-                            )}
-                        </div>
+                      <div className="flex gap-2">
+                        <EditProductDialog
+                          product={product}
+                          onProductUpdated={loadProducts}
+                        />
+                        {product.is_active && (
+                          <DeactivateProductButton
+                            productId={product.id}
+                            onSuccess={loadProducts}
+                          />
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))

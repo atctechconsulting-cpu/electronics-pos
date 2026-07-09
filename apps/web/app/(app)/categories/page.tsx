@@ -57,7 +57,8 @@ export default function CategoriesPage() {
             Categories
           </h1>
           <p className="text-sm text-slate-500">
-            Organise products into groups like Phones, Laptops, TVs and Accessories.
+            Organise products into groups like Phones, Laptops, TVs and
+            Accessories.
           </p>
         </div>
 

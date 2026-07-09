@@ -22,31 +22,31 @@ export default function OnboardingPage() {
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
-async function handleSubmit(e: React.FormEvent) {
-  e.preventDefault();
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
 
-  if (!user) return;
+    if (!user) return;
 
-  setLoading(true);
-  setErrorMessage("");
+    setLoading(true);
+    setErrorMessage("");
 
-  const slug = slugify(businessName);
+    const slug = slugify(businessName);
 
-  const { error } = await supabase.rpc("create_initial_business", {
-    business_name: businessName,
-    business_slug: slug,
-    branch_name: branchName,
-  });
+    const { error } = await supabase.rpc("create_initial_business", {
+      business_name: businessName,
+      business_slug: slug,
+      branch_name: branchName,
+    });
 
-  if (error) {
-    setLoading(false);
-    setErrorMessage(error.message);
-    return;
+    if (error) {
+      setLoading(false);
+      setErrorMessage(error.message);
+      return;
+    }
+
+    router.push("/dashboard");
+    router.refresh();
   }
-
-  router.push("/dashboard");
-  router.refresh();
-}
 
   return (
     <div className="mx-auto flex min-h-[70vh] max-w-xl items-center">

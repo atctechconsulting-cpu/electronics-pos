@@ -54,7 +54,9 @@ export default function LoginPage() {
           </div>
 
           <div>
-            <label className="text-sm font-medium text-slate-700">Password</label>
+            <label className="text-sm font-medium text-slate-700">
+              Password
+            </label>
             <input
               type="password"
               className="mt-1 w-full rounded-lg border px-3 py-2 text-slate-900"
@@ -78,11 +80,11 @@ export default function LoginPage() {
         </form>
 
         <p className="mt-6 text-center text-sm text-slate-500">
-  Don&apos;t have an account?{" "}
-  <Link href="/signup" className="font-medium text-slate-900">
-    Create account
-  </Link>
-</p>
+          Don&apos;t have an account?{" "}
+          <Link href="/signup" className="font-medium text-slate-900">
+            Create account
+          </Link>
+        </p>
       </div>
     </main>
   );

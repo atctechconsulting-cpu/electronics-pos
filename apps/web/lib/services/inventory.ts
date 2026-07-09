@@ -3,7 +3,8 @@ import { supabase } from "@/lib/supabase/client";
 export async function getInventory(organizationId: string, branchId: string) {
   const { data, error } = await supabase
     .from("inventory")
-    .select(`
+    .select(
+      `
       *,
       products:product_id (
         id,
@@ -16,7 +17,8 @@ export async function getInventory(organizationId: string, branchId: string) {
         categories:category_id (id, name),
         brands:brand_id (id, name)
       )
-    `)
+    `
+    )
     .eq("organization_id", organizationId)
     .eq("branch_id", branchId)
     .order("created_at", { ascending: false });

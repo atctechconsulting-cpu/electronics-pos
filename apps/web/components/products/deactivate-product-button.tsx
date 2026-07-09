@@ -7,14 +7,9 @@ type Props = {
   onSuccess: () => void;
 };
 
-export function DeactivateProductButton({
-  productId,
-  onSuccess,
-}: Props) {
+export function DeactivateProductButton({ productId, onSuccess }: Props) {
   async function handleDeactivate() {
-    const confirmed = window.confirm(
-      "Deactivate this product?"
-    );
+    const confirmed = window.confirm("Deactivate this product?");
 
     if (!confirmed) return;
 

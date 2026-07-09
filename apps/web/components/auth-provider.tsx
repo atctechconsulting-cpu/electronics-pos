@@ -98,28 +98,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
-  let mounted = true;
+    let mounted = true;
 
-  async function initialiseAuth() {
-    if (!mounted) return;
-    await loadAuthContext();
-  }
+    async function initialiseAuth() {
+      if (!mounted) return;
+      await loadAuthContext();
+    }
 
-  void initialiseAuth();
+    void initialiseAuth();
 
-  const {
-    data: { subscription },
-  } = supabase.auth.onAuthStateChange(() => {
-    setTimeout(() => {
-      void loadAuthContext();
-    }, 0);
-  });
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(() => {
+      setTimeout(() => {
+        void loadAuthContext();
+      }, 0);
+    });
 
-  return () => {
-    mounted = false;
-    subscription.unsubscribe();
-  };
-}, []);
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
 
   async function signOut() {
     await supabase.auth.signOut();

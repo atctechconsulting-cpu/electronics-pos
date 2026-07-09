@@ -16,7 +16,9 @@ export async function globalSearch(organizationId: string, query: string) {
       .from("products")
       .select("id, name, sku, barcode")
       .eq("organization_id", organizationId)
-      .or(`name.ilike.%${search}%,sku.ilike.%${search}%,barcode.ilike.%${search}%`)
+      .or(
+        `name.ilike.%${search}%,sku.ilike.%${search}%,barcode.ilike.%${search}%`
+      )
       .limit(5),
 
     supabase

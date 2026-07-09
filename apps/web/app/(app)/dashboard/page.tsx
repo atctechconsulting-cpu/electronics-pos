@@ -46,11 +46,11 @@ export default function DashboardPage() {
   const { organization, loading } = useAuth();
   useEffect(() => {
     if (!loading && !organization) {
-    router.push("/onboarding");
-  }
-}, [loading, organization, router]);
-  
-return (
+      router.push("/onboarding");
+    }
+  }, [loading, organization, router]);
+
+  return (
     <div className="space-y-6">
       <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
         <div>
@@ -90,9 +90,7 @@ return (
                 {stat.value}
               </h2>
 
-              <p className="mt-1 text-xs text-slate-500">
-                {stat.description}
-              </p>
+              <p className="mt-1 text-xs text-slate-500">{stat.description}</p>
             </div>
           );
         })}
@@ -129,9 +127,7 @@ return (
       <div className="grid gap-4 xl:grid-cols-3">
         <div className="rounded-xl border bg-white p-5 shadow-sm">
           <ReceiptText className="h-5 w-5 text-slate-700" />
-          <h2 className="mt-4 font-semibold text-slate-900">
-            Daily Closing
-          </h2>
+          <h2 className="mt-4 font-semibold text-slate-900">Daily Closing</h2>
           <p className="mt-1 text-sm text-slate-500">
             Cash drawer and end-of-day summaries will be managed here.
           </p>
