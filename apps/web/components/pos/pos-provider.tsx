@@ -2,6 +2,8 @@
 
 import { createContext, ReactNode, useContext, useMemo, useState } from "react";
 
+import type { Customer } from "@/lib/services/customers";
+
 export type PosBasketItem = {
   id: string;
   name: string;
@@ -19,17 +21,25 @@ type PosContextValue = {
   subtotal: number;
   vat: number;
   total: number;
+
+  selectedCustomer: Customer | null;
+  setSelectedCustomer: (customer: Customer | null) => void;
+
   addProduct: (product: AddProductInput) => void;
   increaseQuantity: (id: string) => void;
   decreaseQuantity: (id: string) => void;
   removeProduct: (id: string) => void;
   clearBasket: () => void;
+  resetSale: () => void;
 };
 
 const PosContext = createContext<PosContextValue | undefined>(undefined);
 
 export function PosProvider({ children }: { children: ReactNode }) {
   const [basket, setBasket] = useState<PosBasketItem[]>([]);
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(
+    null
+  );
 
   function addProduct(product: AddProductInput) {
     setBasket((current) => {
@@ -87,19 +97,25 @@ export function PosProvider({ children }: { children: ReactNode }) {
     setBasket([]);
   }
 
+  function resetSale() {
+    setBasket([]);
+    setSelectedCustomer(null);
+  }
+
   const totals = useMemo(() => {
-    const subtotal = basket.reduce(
+    const total = basket.reduce(
       (sum, item) => sum + item.retail_price * item.quantity,
       0
     );
 
-    const vat = subtotal - subtotal / 1.2;
+    const vat = total - total / 1.2;
+    const subtotal = total - vat;
 
     return {
       itemCount: basket.reduce((sum, item) => sum + item.quantity, 0),
       subtotal,
       vat,
-      total: subtotal,
+      total,
     };
   }, [basket]);
 
@@ -111,11 +127,16 @@ export function PosProvider({ children }: { children: ReactNode }) {
         subtotal: totals.subtotal,
         vat: totals.vat,
         total: totals.total,
+
+        selectedCustomer,
+        setSelectedCustomer,
+
         addProduct,
         increaseQuantity,
         decreaseQuantity,
         removeProduct,
         clearBasket,
+        resetSale,
       }}
     >
       {children}

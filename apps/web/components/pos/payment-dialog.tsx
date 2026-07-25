@@ -25,7 +25,7 @@ type PaymentDialogProps = {
 
 export function PaymentDialog({ open, onClose }: PaymentDialogProps) {
   const { organization, branch } = useAuth();
-  const { basket, total, clearBasket } = usePos();
+  const { basket, total, selectedCustomer, resetSale } = usePos();
 
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("CASH");
   const [paymentReference, setPaymentReference] = useState("");
@@ -59,6 +59,7 @@ export function PaymentDialog({ open, onClose }: PaymentDialogProps) {
       const sale = await completeSale({
         organizationId: organization.id,
         branchId: branch.id,
+        customerId: selectedCustomer?.id ?? null,
         basket,
         paymentMethod,
         paymentReference,
@@ -67,7 +68,7 @@ export function PaymentDialog({ open, onClose }: PaymentDialogProps) {
       });
 
       setCompletedSale(sale);
-      clearBasket();
+      resetSale();
     } catch (error: unknown) {
       console.error("Sale completion failed:", error);
 

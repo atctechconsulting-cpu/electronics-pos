@@ -7,6 +7,7 @@ export type PaymentMethod =
 type CompleteSaleInput = {
   organizationId: string;
   branchId: string;
+  customerId?: string | null;
   basket: PosBasketItem[];
   paymentMethod: PaymentMethod;
   paymentReference?: string;
@@ -17,6 +18,7 @@ type CompleteSaleInput = {
 export type CompletedSale = {
   sale_id: string;
   receipt_number: string;
+  customer_id: string | null;
   subtotal: number;
   vat_amount: number;
   total_amount: number;
@@ -26,6 +28,7 @@ export type CompletedSale = {
 export async function completeSale({
   organizationId,
   branchId,
+  customerId,
   basket,
   paymentMethod,
   paymentReference,
@@ -45,13 +48,17 @@ export async function completeSale({
     },
   ];
 
-  const { data, error } = await supabase.rpc("complete_pos_sale", {
-    p_organization_id: organizationId,
-    p_branch_id: branchId,
-    p_items: items,
-    p_payments: payments,
-    p_notes: notes?.trim() || null,
-  });
+  const { data, error } = await supabase.rpc(
+    "complete_pos_sale_with_customer",
+    {
+      p_organization_id: organizationId,
+      p_branch_id: branchId,
+      p_customer_id: customerId ?? null,
+      p_items: items,
+      p_payments: payments,
+      p_notes: notes?.trim() || null,
+    }
+  );
 
   if (error) {
     console.error("Checkout RPC failed:", {

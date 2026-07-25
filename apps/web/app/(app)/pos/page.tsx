@@ -1,6 +1,7 @@
 "use client";
 
 import { Basket } from "@/components/pos/basket";
+import { CustomerSelector } from "@/components/pos/customer-selector";
 import { PosProvider } from "@/components/pos/pos-provider";
 import { PosSummary } from "@/components/pos/pos-summary";
 import { ProductSearch } from "@/components/pos/product-search";
@@ -9,7 +10,8 @@ function PosWorkspace() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Point of Sale</h1>
+        <h1 className="text-2xl font-bold text-slate-900">Point of Sale</h1>
+
         <p className="text-sm text-slate-500">
           Fast checkout for in-store sales.
         </p>
@@ -21,6 +23,7 @@ function PosWorkspace() {
         </div>
 
         <div className="space-y-6">
+          <CustomerSelector />
           <Basket />
           <PosSummary />
         </div>
