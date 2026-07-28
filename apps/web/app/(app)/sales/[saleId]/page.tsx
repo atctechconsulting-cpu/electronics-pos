@@ -17,6 +17,7 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { ReceiptDialog } from "@/components/pos/receipt-dialog";
+import { ReturnItemsDialog } from "@/components/returns/return-items-dialog";
 import { getSaleDetails, type SaleDetails } from "@/lib/services/sale-details";
 
 export default function SaleDetailsPage() {
@@ -26,31 +27,37 @@ export default function SaleDetailsPage() {
   const [sale, setSale] = useState<SaleDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+
   const [receiptOpen, setReceiptOpen] = useState(false);
+  const [returnOpen, setReturnOpen] = useState(false);
 
-  useEffect(() => {
-    async function loadSale() {
-      if (!saleId) {
-        return;
-      }
-
-      setLoading(true);
-      setErrorMessage("");
-
-      try {
-        const data = await getSaleDetails(saleId);
-        setSale(data);
-      } catch (error: unknown) {
-        setErrorMessage(
-          error instanceof Error ? error.message : "Unable to load the sale."
-        );
-      } finally {
-        setLoading(false);
-      }
+  async function loadSale() {
+    if (!saleId) {
+      return;
     }
 
+    setLoading(true);
+    setErrorMessage("");
+
+    try {
+      const data = await getSaleDetails(saleId);
+      setSale(data);
+    } catch (error: unknown) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Unable to load the sale."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
     void loadSale();
   }, [saleId]);
+
+  async function handleReturnCompleted() {
+    await loadSale();
+  }
 
   if (loading) {
     return (
@@ -82,6 +89,8 @@ export default function SaleDetailsPage() {
     ? `${sale.customer.first_name} ${sale.customer.last_name ?? ""}`.trim()
     : "Walk-in Customer";
 
+  const fullyRefunded = sale.status === "REFUNDED";
+
   return (
     <>
       <div className="space-y-6">
@@ -101,7 +110,13 @@ export default function SaleDetailsPage() {
                   Sale Details
                 </h1>
 
-                <span className="rounded-full bg-green-50 px-3 py-1 text-xs font-medium text-green-700">
+                <span
+                  className={`rounded-full px-3 py-1 text-xs font-medium ${
+                    fullyRefunded
+                      ? "bg-purple-50 text-purple-700"
+                      : "bg-green-50 text-green-700"
+                  }`}
+                >
                   {sale.status}
                 </span>
               </div>
@@ -124,11 +139,12 @@ export default function SaleDetailsPage() {
 
             <button
               type="button"
-              disabled
-              className="inline-flex items-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white opacity-50"
+              onClick={() => setReturnOpen(true)}
+              disabled={fullyRefunded}
+              className="inline-flex items-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <ReceiptText className="mr-2 h-4 w-4" />
-              Return Items
+              {fullyRefunded ? "Fully Returned" : "Return Items"}
             </button>
           </div>
         </div>
@@ -323,6 +339,7 @@ export default function SaleDetailsPage() {
 
                   <div>
                     <p className="text-slate-500">Completed</p>
+
                     <p className="mt-1 font-medium text-slate-900">
                       {new Date(
                         sale.completed_at ?? sale.created_at
@@ -336,6 +353,7 @@ export default function SaleDetailsPage() {
 
                   <div>
                     <p className="text-slate-500">Branch</p>
+
                     <p className="mt-1 font-medium text-slate-900">
                       {sale.branch?.name ?? "Branch"}
                     </p>
@@ -347,6 +365,7 @@ export default function SaleDetailsPage() {
 
                   <div>
                     <p className="text-slate-500">Cashier</p>
+
                     <p className="mt-1 font-medium text-slate-900">
                       {sale.cashier?.full_name ?? "Cashier"}
                     </p>
@@ -370,6 +389,13 @@ export default function SaleDetailsPage() {
         open={receiptOpen}
         saleId={sale.id}
         onClose={() => setReceiptOpen(false)}
+      />
+
+      <ReturnItemsDialog
+        open={returnOpen}
+        sale={sale}
+        onClose={() => setReturnOpen(false)}
+        onReturnCompleted={handleReturnCompleted}
       />
     </>
   );
