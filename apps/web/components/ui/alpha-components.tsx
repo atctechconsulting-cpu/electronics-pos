@@ -147,18 +147,24 @@ const statusClasses: Record<string, string> = {
   COMPLETED: "bg-green-50 text-green-700 ring-green-600/20",
   ACTIVE: "bg-green-50 text-green-700 ring-green-600/20",
   IN_STOCK: "bg-green-50 text-green-700 ring-green-600/20",
+  PAID: "bg-green-50 text-green-700 ring-green-600/20",
 
   PENDING: "bg-amber-50 text-amber-700 ring-amber-600/20",
   DRAFT: "bg-amber-50 text-amber-700 ring-amber-600/20",
   HELD: "bg-amber-50 text-amber-700 ring-amber-600/20",
+  PARTIALLY_PAID: "bg-amber-50 text-amber-700 ring-amber-600/20",
+  PARTIALLY_RECEIVED: "bg-amber-50 text-amber-700 ring-amber-600/20",
 
   SOLD: "bg-blue-50 text-blue-700 ring-blue-600/20",
   PROCESSING: "bg-blue-50 text-blue-700 ring-blue-600/20",
+  ORDERED: "bg-blue-50 text-blue-700 ring-blue-600/20",
 
   REFUNDED: "bg-purple-50 text-purple-700 ring-purple-600/20",
   RETURNED: "bg-purple-50 text-purple-700 ring-purple-600/20",
 
+  UNPAID: "bg-red-50 text-red-700 ring-red-600/20",
   CANCELLED: "bg-red-50 text-red-700 ring-red-600/20",
+
   INACTIVE: "bg-slate-100 text-slate-600 ring-slate-500/20",
 };
 

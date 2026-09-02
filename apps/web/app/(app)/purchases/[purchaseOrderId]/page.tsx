@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   Building2,
   CalendarDays,
+  FileText,
   PackageCheck,
   Printer,
   ShoppingCart,
@@ -14,13 +15,19 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
+import { CreateSupplierInvoiceDialog } from "@/components/accounts-payable/create-supplier-invoice-dialog";
+import { ReceivePurchaseOrderDialog } from "@/components/purchases/receive-purchase-order-dialog";
+
 import {
   getPurchaseOrderDetails,
   orderPurchaseOrder,
   type PurchaseOrderDetails,
 } from "@/lib/services/purchase-orders";
 
-import { ReceivePurchaseOrderDialog } from "@/components/purchases/receive-purchase-order-dialog";
+import {
+  getSupplierInvoiceForPurchaseOrder,
+  type SupplierInvoiceRow,
+} from "@/lib/services/supplier-invoices";
 
 function formatCurrency(value: number) {
   return new Intl.NumberFormat("en-GB", {
@@ -73,6 +80,25 @@ function statusClasses(status: string) {
   }
 }
 
+function invoiceStatusClasses(status: string) {
+  switch (status) {
+    case "UNPAID":
+      return "bg-red-50 text-red-700";
+
+    case "PARTIALLY_PAID":
+      return "bg-amber-50 text-amber-700";
+
+    case "PAID":
+      return "bg-emerald-50 text-emerald-700";
+
+    case "CANCELLED":
+      return "bg-slate-100 text-slate-600";
+
+    default:
+      return "bg-slate-100 text-slate-700";
+  }
+}
+
 export default function PurchaseOrderDetailsPage() {
   const params = useParams<{ purchaseOrderId: string }>();
 
@@ -81,11 +107,15 @@ export default function PurchaseOrderDetailsPage() {
   const [purchaseOrder, setPurchaseOrder] =
     useState<PurchaseOrderDetails | null>(null);
 
-  const [loading, setLoading] = useState(true);
+  const [supplierInvoice, setSupplierInvoice] =
+    useState<SupplierInvoiceRow | null>(null);
 
+  const [loading, setLoading] = useState(true);
   const [ordering, setOrdering] = useState(false);
+  const [invoiceLoading, setInvoiceLoading] = useState(true);
 
   const [error, setError] = useState<string | null>(null);
+  const [invoiceError, setInvoiceError] = useState<string | null>(null);
 
   const loadPurchaseOrder = useCallback(async () => {
     if (!purchaseOrderId) return;
@@ -107,9 +137,34 @@ export default function PurchaseOrderDetailsPage() {
     }
   }, [purchaseOrderId]);
 
+  const loadSupplierInvoice = useCallback(async () => {
+    if (!purchaseOrderId) return;
+
+    try {
+      setInvoiceLoading(true);
+      setInvoiceError(null);
+
+      const data = await getSupplierInvoiceForPurchaseOrder(purchaseOrderId);
+
+      setSupplierInvoice(data);
+    } catch (loadError) {
+      setInvoiceError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Unable to load the supplier invoice for this purchase order."
+      );
+    } finally {
+      setInvoiceLoading(false);
+    }
+  }, [purchaseOrderId]);
+
+  const refreshPage = useCallback(async () => {
+    await Promise.all([loadPurchaseOrder(), loadSupplierInvoice()]);
+  }, [loadPurchaseOrder, loadSupplierInvoice]);
+
   useEffect(() => {
-    loadPurchaseOrder();
-  }, [loadPurchaseOrder]);
+    void refreshPage();
+  }, [refreshPage]);
 
   async function handlePlaceOrder() {
     if (!purchaseOrder) return;
@@ -126,7 +181,7 @@ export default function PurchaseOrderDetailsPage() {
 
       await orderPurchaseOrder(purchaseOrder.id);
 
-      await loadPurchaseOrder();
+      await refreshPage();
     } catch (orderError) {
       setError(
         orderError instanceof Error
@@ -191,6 +246,11 @@ export default function PurchaseOrderDetailsPage() {
     purchaseOrder.status === "ORDERED" ||
     purchaseOrder.status === "PARTIALLY_RECEIVED";
 
+  const canCreateSupplierInvoice =
+    purchaseOrder.status === "ORDERED" ||
+    purchaseOrder.status === "PARTIALLY_RECEIVED" ||
+    purchaseOrder.status === "RECEIVED";
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -248,7 +308,15 @@ export default function PurchaseOrderDetailsPage() {
           {canReceive && (
             <ReceivePurchaseOrderDialog
               purchaseOrder={purchaseOrder}
-              onSuccess={loadPurchaseOrder}
+              onSuccess={refreshPage}
+            />
+          )}
+
+          {canCreateSupplierInvoice && !invoiceLoading && (
+            <CreateSupplierInvoiceDialog
+              purchaseOrder={purchaseOrder}
+              existingInvoice={supplierInvoice}
+              onSuccess={loadSupplierInvoice}
             />
           )}
 
@@ -264,6 +332,12 @@ export default function PurchaseOrderDetailsPage() {
       {error && (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
+        </div>
+      )}
+
+      {invoiceError && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          {invoiceError}
         </div>
       )}
 
@@ -333,6 +407,73 @@ export default function PurchaseOrderDetailsPage() {
         </div>
       </div>
 
+      {supplierInvoice && (
+        <div className="rounded-xl border border-slate-200 bg-white p-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <div className="rounded-lg bg-slate-100 p-2.5">
+                <FileText className="h-5 w-5 text-slate-700" />
+              </div>
+
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="font-semibold text-slate-950">
+                    Supplier Invoice {supplierInvoice.invoice_number}
+                  </h2>
+
+                  <span
+                    className={`rounded-full px-2.5 py-1 text-xs font-semibold ${invoiceStatusClasses(
+                      supplierInvoice.status
+                    )}`}
+                  >
+                    {supplierInvoice.status.replaceAll("_", " ")}
+                  </span>
+                </div>
+
+                <p className="mt-1 text-sm text-slate-500">
+                  This purchase order has been recorded in Accounts Payable.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-5">
+              <div className="text-sm">
+                <p className="text-xs uppercase tracking-wide text-slate-500">
+                  Invoice Total
+                </p>
+
+                <p className="mt-1 font-semibold text-slate-900">
+                  {formatCurrency(supplierInvoice.total_amount)}
+                </p>
+              </div>
+
+              <div className="text-sm">
+                <p className="text-xs uppercase tracking-wide text-slate-500">
+                  Outstanding
+                </p>
+
+                <p
+                  className={`mt-1 font-semibold ${
+                    supplierInvoice.amount_due > 0
+                      ? "text-slate-950"
+                      : "text-emerald-700"
+                  }`}
+                >
+                  {formatCurrency(supplierInvoice.amount_due)}
+                </p>
+              </div>
+
+              <Link
+                href={`/accounts-payable/${supplierInvoice.id}`}
+                className="inline-flex rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 hover:text-slate-950"
+              >
+                View Invoice
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="rounded-xl border bg-white">
         <div className="border-b px-5 py-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -364,15 +505,10 @@ export default function PurchaseOrderDetailsPage() {
             <thead className="border-b bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-5 py-3 font-medium">Product</th>
-
                 <th className="px-5 py-3 font-medium">Ordered</th>
-
                 <th className="px-5 py-3 font-medium">Received</th>
-
                 <th className="px-5 py-3 font-medium">Remaining</th>
-
                 <th className="px-5 py-3 font-medium">Cost</th>
-
                 <th className="px-5 py-3 font-medium">Line Total</th>
               </tr>
             </thead>

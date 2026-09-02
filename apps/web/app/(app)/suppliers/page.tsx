@@ -1,15 +1,40 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Plus } from "lucide-react";
+import {
+  ArrowRight,
+  Building2,
+  CircleDollarSign,
+  Clock3,
+  FileText,
+  Plus,
+  Search,
+  WalletCards,
+} from "lucide-react";
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+
 import { useAuth } from "@/components/auth-provider";
-import { createSupplier, getSuppliers } from "@/lib/services/suppliers";
+import {
+  Currency,
+  EmptyState,
+  PageHeader,
+  SectionCard,
+  StatCard,
+} from "@/components/ui/alpha-components";
+import {
+  createSupplier,
+  getSupplierBalances,
+  type SupplierBalance,
+} from "@/lib/services/suppliers";
 
 export default function SuppliersPage() {
   const { organization } = useAuth();
 
-  const [suppliers, setSuppliers] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [suppliers, setSuppliers] = useState<SupplierBalance[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
   const [form, setForm] = useState({
     name: "",
@@ -25,162 +50,462 @@ export default function SuppliersPage() {
 
   async function loadSuppliers() {
     if (!organization) return;
-    const data = await getSuppliers(organization.id);
-    setSuppliers(data ?? []);
+
+    try {
+      setLoading(true);
+      setError(null);
+
+      const data = await getSupplierBalances(organization.id);
+
+      setSuppliers(data ?? []);
+    } catch (loadError) {
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Unable to load suppliers."
+      );
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
-    loadSuppliers();
+    void loadSuppliers();
   }, [organization]);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
+
     if (!organization) return;
 
-    setLoading(true);
+    try {
+      setSaving(true);
+      setError(null);
 
-    await createSupplier({
-      organization_id: organization.id,
-      name: form.name,
-      supplier_code: form.supplier_code,
-      contact_name: form.contact_name || null,
-      email: form.email || null,
-      phone: form.phone || null,
-      website: form.website || null,
-      city: form.city || null,
-      postcode: form.postcode || null,
-      notes: form.notes || null,
+      await createSupplier({
+        organization_id: organization.id,
+        name: form.name.trim(),
+        supplier_code: form.supplier_code.trim(),
+        contact_name: form.contact_name.trim() || null,
+        email: form.email.trim() || null,
+        phone: form.phone.trim() || null,
+        website: form.website.trim() || null,
+        city: form.city.trim() || null,
+        postcode: form.postcode.trim() || null,
+        notes: form.notes.trim() || null,
+      });
+
+      setForm({
+        name: "",
+        supplier_code: "",
+        contact_name: "",
+        email: "",
+        phone: "",
+        website: "",
+        city: "",
+        postcode: "",
+        notes: "",
+      });
+
+      await loadSuppliers();
+    } catch (createError) {
+      setError(
+        createError instanceof Error
+          ? createError.message
+          : "Unable to create supplier."
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const summary = useMemo(() => {
+    return suppliers.reduce(
+      (totals, supplier) => {
+        totals.outstanding += supplier.outstanding;
+        totals.overdue += supplier.overdue;
+        totals.openInvoices += supplier.open_invoices;
+
+        return totals;
+      },
+      {
+        outstanding: 0,
+        overdue: 0,
+        openInvoices: 0,
+      }
+    );
+  }, [suppliers]);
+
+  const filteredSuppliers = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
+    if (!query) return suppliers;
+
+    return suppliers.filter((supplier) => {
+      return [
+        supplier.name,
+        supplier.supplier_code,
+        supplier.contact_name,
+        supplier.email,
+        supplier.phone,
+        supplier.city,
+      ].some((value) =>
+        String(value ?? "")
+          .toLowerCase()
+          .includes(query)
+      );
     });
+  }, [search, suppliers]);
 
-    setForm({
-      name: "",
-      supplier_code: "",
-      contact_name: "",
-      email: "",
-      phone: "",
-      website: "",
-      city: "",
-      postcode: "",
-      notes: "",
-    });
+  function formatDate(value?: string | null) {
+    if (!value) return "No payments";
 
-    await loadSuppliers();
-    setLoading(false);
+    return new Intl.DateTimeFormat("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    }).format(new Date(`${value}T00:00:00`));
   }
 
   return (
-    <div className="grid gap-6 xl:grid-cols-3">
-      <div className="space-y-6 xl:col-span-2">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-            Suppliers
-          </h1>
-          <p className="text-sm text-slate-500">
-            Manage suppliers you purchase products from.
-          </p>
-        </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="Suppliers"
+        description="Manage supplier relationships, outstanding balances and payment activity."
+      />
 
-        <div className="rounded-xl border bg-white shadow-sm">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-slate-500">
-              <tr>
-                <th className="p-4 text-left">Supplier</th>
-                <th className="p-4 text-left">Code</th>
-                <th className="p-4 text-left">Contact</th>
-                <th className="p-4 text-left">Phone</th>
-                <th className="p-4 text-left">Email</th>
-              </tr>
-            </thead>
-
-            <tbody>
-              {suppliers.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="p-8 text-center text-slate-500">
-                    No suppliers yet.
-                  </td>
-                </tr>
-              ) : (
-                suppliers.map((supplier) => (
-                  <tr key={supplier.id} className="border-t">
-                    <td className="p-4 font-medium text-slate-900">
-                      {supplier.name}
-                    </td>
-                    <td className="p-4">{supplier.supplier_code}</td>
-                    <td className="p-4">{supplier.contact_name || "-"}</td>
-                    <td className="p-4">{supplier.phone || "-"}</td>
-                    <td className="p-4">{supplier.email || "-"}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+      {error && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {error}
         </div>
+      )}
+
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard
+          label="Total Suppliers"
+          value={suppliers.length}
+          icon={Building2}
+          description="Active supplier records"
+        />
+
+        <StatCard
+          label="Outstanding"
+          value={<Currency amount={summary.outstanding} />}
+          icon={WalletCards}
+          description="Total supplier balance due"
+        />
+
+        <StatCard
+          label="Overdue"
+          value={<Currency amount={summary.overdue} />}
+          icon={Clock3}
+          description="Supplier invoices past due"
+        />
+
+        <StatCard
+          label="Open Invoices"
+          value={summary.openInvoices}
+          icon={FileText}
+          description="Unpaid or partially paid"
+        />
       </div>
 
-      <form
-        onSubmit={handleCreate}
-        className="h-fit rounded-xl border bg-white p-5 shadow-sm"
-      >
-        <h2 className="font-semibold text-slate-900">Add Supplier</h2>
+      <div className="grid gap-6 xl:grid-cols-[1fr_360px]">
+        <SectionCard
+          title="Supplier Balances"
+          description="Financial position across all suppliers."
+          actions={
+            <div className="relative w-full sm:w-72">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
 
-        <div className="mt-4 space-y-4">
-          <input
-            className="w-full rounded-lg border px-3 py-2"
-            placeholder="Supplier name"
-            value={form.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value })}
-            required
-          />
+              <input
+                type="search"
+                placeholder="Search suppliers..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+              />
+            </div>
+          }
+        >
+          {loading ? (
+            <div className="flex min-h-[300px] items-center justify-center text-sm text-slate-500">
+              Loading suppliers...
+            </div>
+          ) : filteredSuppliers.length === 0 ? (
+            <EmptyState
+              icon={Building2}
+              title={
+                suppliers.length === 0
+                  ? "No suppliers yet"
+                  : "No suppliers found"
+              }
+              description={
+                suppliers.length === 0
+                  ? "Add your first supplier to begin managing purchasing and accounts payable."
+                  : "Try changing your search term."
+              }
+            />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[1050px] text-left">
+                <thead className="border-b bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th className="px-5 py-3 font-medium">Supplier</th>
+                    <th className="px-5 py-3 font-medium">Contact</th>
+                    <th className="px-5 py-3 text-right font-medium">
+                      Invoiced
+                    </th>
+                    <th className="px-5 py-3 text-right font-medium">Paid</th>
+                    <th className="px-5 py-3 text-right font-medium">
+                      Outstanding
+                    </th>
+                    <th className="px-5 py-3 text-right font-medium">
+                      Overdue
+                    </th>
+                    <th className="px-5 py-3 text-center font-medium">Open</th>
+                    <th className="px-5 py-3 font-medium">Last Payment</th>
+                    <th className="px-5 py-3" />
+                  </tr>
+                </thead>
 
-          <input
-            className="w-full rounded-lg border px-3 py-2"
-            placeholder="Supplier code e.g. APPLE-UK"
-            value={form.supplier_code}
-            onChange={(e) =>
-              setForm({ ...form, supplier_code: e.target.value })
-            }
-            required
-          />
+                <tbody className="divide-y">
+                  {filteredSuppliers.map((supplier) => (
+                    <tr
+                      key={supplier.id}
+                      className="text-sm transition hover:bg-slate-50/70"
+                    >
+                      <td className="px-5 py-4">
+                        <Link
+                          href={`/suppliers/${supplier.id}`}
+                          className="font-semibold text-slate-900 hover:underline"
+                        >
+                          {supplier.name}
+                        </Link>
 
-          <input
-            className="w-full rounded-lg border px-3 py-2"
-            placeholder="Contact name"
-            value={form.contact_name}
-            onChange={(e) => setForm({ ...form, contact_name: e.target.value })}
-          />
+                        <div className="mt-1 text-xs text-slate-500">
+                          {supplier.supplier_code}
+                        </div>
+                      </td>
 
-          <input
-            className="w-full rounded-lg border px-3 py-2"
-            placeholder="Phone"
-            value={form.phone}
-            onChange={(e) => setForm({ ...form, phone: e.target.value })}
-          />
+                      <td className="px-5 py-4">
+                        <p className="text-slate-700">
+                          {supplier.contact_name || "—"}
+                        </p>
 
-          <input
-            className="w-full rounded-lg border px-3 py-2"
-            placeholder="Email"
-            type="email"
-            value={form.email}
-            onChange={(e) => setForm({ ...form, email: e.target.value })}
-          />
+                        <p className="mt-1 text-xs text-slate-500">
+                          {supplier.email ||
+                            supplier.phone ||
+                            "No contact details"}
+                        </p>
+                      </td>
 
-          <textarea
-            className="w-full rounded-lg border px-3 py-2"
-            placeholder="Notes"
-            rows={3}
-            value={form.notes}
-            onChange={(e) => setForm({ ...form, notes: e.target.value })}
-          />
+                      <td className="px-5 py-4 text-right font-medium text-slate-700">
+                        <Currency amount={supplier.total_invoiced} />
+                      </td>
 
-          <button
-            disabled={loading}
-            className="inline-flex w-full items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-          >
-            <Plus className="mr-2 h-4 w-4" />
-            {loading ? "Saving..." : "Add Supplier"}
-          </button>
-        </div>
-      </form>
+                      <td className="px-5 py-4 text-right font-medium text-emerald-700">
+                        <Currency amount={supplier.total_paid} />
+                      </td>
+
+                      <td className="px-5 py-4 text-right">
+                        <span
+                          className={
+                            supplier.outstanding > 0
+                              ? "font-semibold text-slate-950"
+                              : "font-medium text-emerald-700"
+                          }
+                        >
+                          <Currency amount={supplier.outstanding} />
+                        </span>
+                      </td>
+
+                      <td className="px-5 py-4 text-right">
+                        <span
+                          className={
+                            supplier.overdue > 0
+                              ? "font-semibold text-red-700"
+                              : "text-slate-500"
+                          }
+                        >
+                          <Currency amount={supplier.overdue} />
+                        </span>
+                      </td>
+
+                      <td className="px-5 py-4 text-center">
+                        <span
+                          className={`inline-flex min-w-8 justify-center rounded-full px-2.5 py-1 text-xs font-semibold ${
+                            supplier.open_invoices > 0
+                              ? "bg-amber-50 text-amber-700"
+                              : "bg-emerald-50 text-emerald-700"
+                          }`}
+                        >
+                          {supplier.open_invoices}
+                        </span>
+                      </td>
+
+                      <td className="px-5 py-4 text-slate-600">
+                        {formatDate(supplier.last_payment_date)}
+                      </td>
+
+                      <td className="px-5 py-4 text-right">
+                        <Link
+                          href={`/suppliers/${supplier.id}`}
+                          className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50 hover:text-slate-950"
+                        >
+                          Statement
+                          <ArrowRight className="h-3.5 w-3.5" />
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </SectionCard>
+
+        <form
+          onSubmit={handleCreate}
+          className="h-fit rounded-xl border bg-white p-5 shadow-sm"
+        >
+          <div className="flex items-center gap-2">
+            <CircleDollarSign className="h-5 w-5 text-slate-600" />
+
+            <div>
+              <h2 className="font-semibold text-slate-900">Add Supplier</h2>
+
+              <p className="mt-1 text-xs text-slate-500">
+                Create a new purchasing supplier.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-5 space-y-4">
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-slate-600">
+                Supplier Name
+              </label>
+
+              <input
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                placeholder="e.g. Apple Distribution UK"
+                value={form.name}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    name: e.target.value,
+                  })
+                }
+                required
+              />
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-slate-600">
+                Supplier Code
+              </label>
+
+              <input
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                placeholder="e.g. APPLE-UK"
+                value={form.supplier_code}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    supplier_code: e.target.value,
+                  })
+                }
+                required
+              />
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-slate-600">
+                Contact Name
+              </label>
+
+              <input
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                placeholder="Optional"
+                value={form.contact_name}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    contact_name: e.target.value,
+                  })
+                }
+              />
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-slate-600">
+                Phone
+              </label>
+
+              <input
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                placeholder="Optional"
+                value={form.phone}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    phone: e.target.value,
+                  })
+                }
+              />
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-slate-600">
+                Email
+              </label>
+
+              <input
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                placeholder="Optional"
+                type="email"
+                value={form.email}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    email: e.target.value,
+                  })
+                }
+              />
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-slate-600">
+                Notes
+              </label>
+
+              <textarea
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                placeholder="Optional notes"
+                rows={3}
+                value={form.notes}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    notes: e.target.value,
+                  })
+                }
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={saving}
+              className="inline-flex w-full items-center justify-center rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Plus className="mr-2 h-4 w-4" />
+
+              {saving ? "Saving..." : "Add Supplier"}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

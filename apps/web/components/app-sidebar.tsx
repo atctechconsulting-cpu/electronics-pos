@@ -15,6 +15,7 @@ import {
   ShoppingCart,
   Tags,
   Users,
+  WalletCards,
   Wrench,
 } from "lucide-react";
 import Link from "next/link";
@@ -98,6 +99,11 @@ const navigation: NavigationSection[] = [
         href: "/purchases",
         label: "Purchases",
         icon: Receipt,
+      },
+      {
+        href: "/accounts-payable",
+        label: "Accounts Payable",
+        icon: WalletCards,
       },
     ],
   },
