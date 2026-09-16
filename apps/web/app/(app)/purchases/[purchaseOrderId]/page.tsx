@@ -16,6 +16,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { CreateSupplierInvoiceDialog } from "@/components/accounts-payable/create-supplier-invoice-dialog";
+import { useAuth } from "@/components/auth-provider";
 import { ReceivePurchaseOrderDialog } from "@/components/purchases/receive-purchase-order-dialog";
 
 import {
@@ -101,8 +102,18 @@ function invoiceStatusClasses(status: string) {
 
 export default function PurchaseOrderDetailsPage() {
   const params = useParams<{ purchaseOrderId: string }>();
-
   const purchaseOrderId = params.purchaseOrderId;
+
+  const {
+    organization,
+    branch,
+    hasPermission,
+    switchingContext,
+    accessLoading,
+  } = useAuth();
+
+  const canManagePurchases = hasPermission("purchases.manage");
+  const canViewFinance = hasPermission("finance.view");
 
   const [purchaseOrder, setPurchaseOrder] =
     useState<PurchaseOrderDetails | null>(null);
@@ -112,42 +123,75 @@ export default function PurchaseOrderDetailsPage() {
 
   const [loading, setLoading] = useState(true);
   const [ordering, setOrdering] = useState(false);
-  const [invoiceLoading, setInvoiceLoading] = useState(true);
+  const [invoiceLoading, setInvoiceLoading] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
   const [invoiceError, setInvoiceError] = useState<string | null>(null);
 
   const loadPurchaseOrder = useCallback(async () => {
-    if (!purchaseOrderId) return;
+    if (!purchaseOrderId || !organization?.id || !branch?.id) {
+      setPurchaseOrder(null);
+      setLoading(false);
+      return;
+    }
 
     try {
+      setLoading(true);
       setError(null);
+      setPurchaseOrder(null);
 
-      const data = await getPurchaseOrderDetails(purchaseOrderId);
+      const data = await getPurchaseOrderDetails(purchaseOrderId, {
+        organizationId: organization.id,
+        branchId: branch.id,
+      });
 
       setPurchaseOrder(data);
     } catch (loadError) {
+      setPurchaseOrder(null);
+
       setError(
         loadError instanceof Error
           ? loadError.message
-          : "Unable to load purchase order."
+          : "Unable to load purchase order in the selected workspace."
       );
     } finally {
       setLoading(false);
     }
-  }, [purchaseOrderId]);
+  }, [purchaseOrderId, organization?.id, branch?.id]);
 
   const loadSupplierInvoice = useCallback(async () => {
-    if (!purchaseOrderId) return;
+    /*
+     * Accounts Payable data is finance-only.
+     *
+     * Users without finance.view must not query supplier invoices at all.
+     * This is intentionally stronger than merely hiding the UI.
+     */
+    if (
+      !canViewFinance ||
+      !purchaseOrderId ||
+      !organization?.id ||
+      !branch?.id
+    ) {
+      setSupplierInvoice(null);
+      setInvoiceError(null);
+      setInvoiceLoading(false);
+      return;
+    }
 
     try {
       setInvoiceLoading(true);
       setInvoiceError(null);
+      setSupplierInvoice(null);
 
-      const data = await getSupplierInvoiceForPurchaseOrder(purchaseOrderId);
+      const data = await getSupplierInvoiceForPurchaseOrder(purchaseOrderId, {
+        organizationId: organization.id,
+        branchId: branch.id,
+      });
 
       setSupplierInvoice(data);
     } catch (loadError) {
+      setSupplierInvoice(null);
+
       setInvoiceError(
         loadError instanceof Error
           ? loadError.message
@@ -156,18 +200,48 @@ export default function PurchaseOrderDetailsPage() {
     } finally {
       setInvoiceLoading(false);
     }
-  }, [purchaseOrderId]);
+  }, [canViewFinance, purchaseOrderId, organization?.id, branch?.id]);
+
+  const refreshPurchaseOrder = useCallback(async () => {
+    await loadPurchaseOrder();
+  }, [loadPurchaseOrder]);
 
   const refreshPage = useCallback(async () => {
-    await Promise.all([loadPurchaseOrder(), loadSupplierInvoice()]);
-  }, [loadPurchaseOrder, loadSupplierInvoice]);
+    /*
+     * Purchasing data is always refreshed.
+     *
+     * Finance data is only requested when the active role has finance.view.
+     */
+    if (canViewFinance) {
+      await Promise.all([loadPurchaseOrder(), loadSupplierInvoice()]);
+      return;
+    }
+
+    setSupplierInvoice(null);
+    setInvoiceError(null);
+    setInvoiceLoading(false);
+
+    await loadPurchaseOrder();
+  }, [canViewFinance, loadPurchaseOrder, loadSupplierInvoice]);
 
   useEffect(() => {
+    if (switchingContext || accessLoading) {
+      /*
+       * Immediately remove data belonging to the previous workspace while
+       * the effective access context is changing.
+       */
+      setPurchaseOrder(null);
+      setSupplierInvoice(null);
+      setError(null);
+      setInvoiceError(null);
+      return;
+    }
+
     void refreshPage();
-  }, [refreshPage]);
+  }, [refreshPage, switchingContext, accessLoading]);
 
   async function handlePlaceOrder() {
-    if (!purchaseOrder) return;
+    if (!purchaseOrder || !canManagePurchases) return;
 
     const confirmed = window.confirm(
       `Place purchase order ${purchaseOrder.po_number}? Once ordered, its products can be received into inventory.`
@@ -181,7 +255,7 @@ export default function PurchaseOrderDetailsPage() {
 
       await orderPurchaseOrder(purchaseOrder.id);
 
-      await refreshPage();
+      await refreshPurchaseOrder();
     } catch (orderError) {
       setError(
         orderError instanceof Error
@@ -197,10 +271,30 @@ export default function PurchaseOrderDetailsPage() {
     window.print();
   }
 
-  if (loading) {
+  const isLoading = loading || switchingContext || accessLoading;
+
+  if (isLoading) {
     return (
       <div className="flex min-h-[400px] items-center justify-center text-sm text-slate-500">
         Loading purchase order...
+      </div>
+    );
+  }
+
+  if (!organization?.id || !branch?.id) {
+    return (
+      <div className="space-y-4">
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+          Select an organisation and branch before viewing purchase orders.
+        </div>
+
+        <Link
+          href="/purchases"
+          className="inline-flex items-center gap-2 text-sm font-medium text-slate-700 hover:text-slate-950"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to Purchase Orders
+        </Link>
       </div>
     );
   }
@@ -243,13 +337,15 @@ export default function PurchaseOrderDetailsPage() {
       : 0;
 
   const canReceive =
-    purchaseOrder.status === "ORDERED" ||
-    purchaseOrder.status === "PARTIALLY_RECEIVED";
+    canManagePurchases &&
+    (purchaseOrder.status === "ORDERED" ||
+      purchaseOrder.status === "PARTIALLY_RECEIVED");
 
   const canCreateSupplierInvoice =
-    purchaseOrder.status === "ORDERED" ||
-    purchaseOrder.status === "PARTIALLY_RECEIVED" ||
-    purchaseOrder.status === "RECEIVED";
+    canViewFinance &&
+    (purchaseOrder.status === "ORDERED" ||
+      purchaseOrder.status === "PARTIALLY_RECEIVED" ||
+      purchaseOrder.status === "RECEIVED");
 
   return (
     <div className="space-y-6">
@@ -292,7 +388,7 @@ export default function PurchaseOrderDetailsPage() {
             Print
           </button>
 
-          {purchaseOrder.status === "DRAFT" && (
+          {canManagePurchases && purchaseOrder.status === "DRAFT" && (
             <button
               type="button"
               onClick={handlePlaceOrder}
@@ -300,7 +396,6 @@ export default function PurchaseOrderDetailsPage() {
               className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <ShoppingCart className="h-4 w-4" />
-
               {ordering ? "Placing Order..." : "Place Order"}
             </button>
           )}
@@ -308,7 +403,7 @@ export default function PurchaseOrderDetailsPage() {
           {canReceive && (
             <ReceivePurchaseOrderDialog
               purchaseOrder={purchaseOrder}
-              onSuccess={refreshPage}
+              onSuccess={refreshPurchaseOrder}
             />
           )}
 
@@ -335,7 +430,7 @@ export default function PurchaseOrderDetailsPage() {
         </div>
       )}
 
-      {invoiceError && (
+      {canViewFinance && invoiceError && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
           {invoiceError}
         </div>
@@ -407,7 +502,7 @@ export default function PurchaseOrderDetailsPage() {
         </div>
       </div>
 
-      {supplierInvoice && (
+      {canViewFinance && supplierInvoice && (
         <div className="rounded-xl border border-slate-200 bg-white p-5">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-start gap-3">

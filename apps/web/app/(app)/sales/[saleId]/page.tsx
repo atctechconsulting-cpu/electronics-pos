@@ -1,5 +1,6 @@
 "use client";
 
+import { useAuth } from "@/components/auth-provider";
 import {
   ArrowLeft,
   Banknote,
@@ -23,6 +24,15 @@ import { getSaleDetails, type SaleDetails } from "@/lib/services/sale-details";
 export default function SaleDetailsPage() {
   const params = useParams<{ saleId: string }>();
   const saleId = params.saleId;
+  const {
+    organization,
+    branch,
+    hasPermission,
+    switchingContext,
+    accessLoading,
+  } = useAuth();
+
+  const canRefund = hasPermission("sales.refund");
 
   const [sale, setSale] = useState<SaleDetails | null>(null);
   const [loading, setLoading] = useState(true);
@@ -32,15 +42,31 @@ export default function SaleDetailsPage() {
   const [returnOpen, setReturnOpen] = useState(false);
 
   async function loadSale() {
-    if (!saleId) {
+    if (
+      !saleId ||
+      !organization ||
+      !branch ||
+      switchingContext ||
+      accessLoading
+    ) {
+      setSale(null);
+      setErrorMessage("");
+
+      setLoading(Boolean(switchingContext || accessLoading));
+
       return;
     }
 
     setLoading(true);
     setErrorMessage("");
+    setSale(null);
 
     try {
-      const data = await getSaleDetails(saleId);
+      const data = await getSaleDetails(saleId, {
+        organizationId: organization.id,
+        branchId: branch.id,
+      });
+
       setSale(data);
     } catch (error: unknown) {
       setErrorMessage(
@@ -53,7 +79,7 @@ export default function SaleDetailsPage() {
 
   useEffect(() => {
     void loadSale();
-  }, [saleId]);
+  }, [saleId, organization, branch, switchingContext, accessLoading]);
 
   async function handleReturnCompleted() {
     await loadSale();
@@ -137,15 +163,17 @@ export default function SaleDetailsPage() {
               View Receipt
             </button>
 
-            <button
-              type="button"
-              onClick={() => setReturnOpen(true)}
-              disabled={fullyRefunded}
-              className="inline-flex items-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <ReceiptText className="mr-2 h-4 w-4" />
-              {fullyRefunded ? "Fully Returned" : "Return Items"}
-            </button>
+            {canRefund && (
+              <button
+                type="button"
+                onClick={() => setReturnOpen(true)}
+                disabled={fullyRefunded}
+                className="inline-flex items-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <ReceiptText className="mr-2 h-4 w-4" />
+                {fullyRefunded ? "Fully Returned" : "Return Items"}
+              </button>
+            )}
           </div>
         </div>
 

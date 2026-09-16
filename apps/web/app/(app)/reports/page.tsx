@@ -17,7 +17,7 @@ import {
   TrendingUp,
   WalletCards,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useAuth } from "@/components/auth-provider";
 import {
@@ -28,12 +28,6 @@ import {
   StatCard,
 } from "@/components/ui/alpha-components";
 import { BusinessReport, getBusinessReport } from "@/lib/services/reports";
-import { supabase } from "@/lib/supabase/client";
-
-type BranchOption = {
-  id: string;
-  name: string;
-};
 
 type DatePreset = "TODAY" | "7_DAYS" | "30_DAYS" | "THIS_MONTH" | "CUSTOM";
 
@@ -92,11 +86,11 @@ function getPresetDates(preset: DatePreset) {
 }
 
 function formatNumber(value: number) {
-  return new Intl.NumberFormat("en-GB").format(value);
+  return new Intl.NumberFormat("en-GB").format(Number(value || 0));
 }
 
-function formatPercent(value: number) {
-  return `${Number(value || 0).toFixed(1)}%`;
+function formatPercent(value: number | null | undefined) {
+  return `${Number(value ?? 0).toFixed(1)}%`;
 }
 
 function formatDate(value: string) {
@@ -114,12 +108,14 @@ function formatLongDate(value: string) {
   }).format(new Date(`${value}T00:00:00`));
 }
 
-function getMarginTone(margin: number) {
-  if (margin >= 30) {
+function getMarginTone(margin: number | null | undefined) {
+  const value = Number(margin ?? 0);
+
+  if (value >= 30) {
     return "text-emerald-700";
   }
 
-  if (margin >= 15) {
+  if (value >= 15) {
     return "text-amber-700";
   }
 
@@ -148,46 +144,66 @@ function MetricRow({
 }
 
 export default function ReportsPage() {
-  const { organization } = useAuth();
+  const {
+    organization,
+    branch,
+    branches,
+    permissions,
+    loading: authLoading,
+    switchingContext,
+    accessLoading,
+    hasPermission,
+  } = useAuth();
 
   const initialDates = useMemo(() => getPresetDates("30_DAYS"), []);
 
   const [preset, setPreset] = useState<DatePreset>("30_DAYS");
   const [startDate, setStartDate] = useState(initialDates.startDate);
   const [endDate, setEndDate] = useState(initialDates.endDate);
-  const [branchId, setBranchId] = useState("");
 
-  const [branches, setBranches] = useState<BranchOption[]>([]);
+  const [branchId, setBranchId] = useState("");
   const [report, setReport] = useState<BusinessReport | null>(null);
 
   const [loading, setLoading] = useState(true);
-  const [branchesLoading, setBranchesLoading] = useState(true);
   const [error, setError] = useState("");
 
-  async function loadBranches() {
-    if (!organization?.id) {
+  const canViewReports = hasPermission("reports.view");
+
+  /*
+   * The effective permissions in AuthProvider are loaded for the current
+   * active branch. That is enough to authorise branch reporting.
+   *
+   * Organisation-wide reporting, however, requires an organisation-scoped
+   * reports.view assignment. We do not infer that from branch membership.
+   *
+   * The hardened database RPC remains the final authority. The UI initially
+   * requests the active branch. If an organisation-wide request succeeds,
+   * that scope is then available through the selector.
+   */
+  const [canViewAllBranches, setCanViewAllBranches] = useState(false);
+
+  const activeBranchId = branch?.id ?? null;
+
+  useEffect(() => {
+    // Whenever the workspace changes, return reporting to the active branch
+    // and discard data from the previous context.
+    setReport(null);
+    setError("");
+    setCanViewAllBranches(false);
+    setBranchId(activeBranchId ?? "");
+  }, [organization?.id, activeBranchId]);
+
+  const loadReport = useCallback(async () => {
+    if (
+      authLoading ||
+      switchingContext ||
+      accessLoading ||
+      !organization?.id ||
+      !canViewReports
+    ) {
       return;
     }
 
-    setBranchesLoading(true);
-
-    const { data, error: branchError } = await supabase
-      .from("branches")
-      .select("id, name")
-      .eq("organization_id", organization.id)
-      .order("name");
-
-    if (branchError) {
-      console.error(branchError);
-      setBranches([]);
-    } else {
-      setBranches((data ?? []) as BranchOption[]);
-    }
-
-    setBranchesLoading(false);
-  }
-
-  async function loadReport() {
     if (!startDate || !endDate) {
       setError("Select a valid reporting period.");
       return;
@@ -198,14 +214,25 @@ export default function ReportsPage() {
       return;
     }
 
+    const requestedBranchId = branchId || activeBranchId;
+
+    if (!requestedBranchId) {
+      setError("No authorised branch is available for reporting.");
+      setReport(null);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     setError("");
+    setReport(null);
 
     try {
       const data = await getBusinessReport({
+        organizationId: organization.id,
         startDate,
         endDate,
-        branchId: branchId || null,
+        branchId: requestedBranchId,
       });
 
       setReport(data);
@@ -220,7 +247,97 @@ export default function ReportsPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [
+    authLoading,
+    switchingContext,
+    accessLoading,
+    organization?.id,
+    canViewReports,
+    startDate,
+    endDate,
+    branchId,
+    activeBranchId,
+  ]);
+
+  /*
+   * Probe organisation-wide reporting through the hardened RPC itself.
+   * A branch-scoped reports.view user will receive Permission denied and
+   * never gets the All branches option.
+   *
+   * An organisation-scoped reports.view user succeeds and may subsequently
+   * select organisation-wide reporting.
+   */
+  useEffect(() => {
+    let cancelled = false;
+
+    async function checkAllBranchAccess() {
+      if (
+        authLoading ||
+        switchingContext ||
+        accessLoading ||
+        !organization?.id ||
+        !canViewReports
+      ) {
+        if (!cancelled) {
+          setCanViewAllBranches(false);
+        }
+        return;
+      }
+
+      try {
+        await getBusinessReport({
+          organizationId: organization.id,
+          startDate,
+          endDate,
+          branchId: null,
+        });
+
+        if (!cancelled) {
+          setCanViewAllBranches(true);
+        }
+      } catch {
+        if (!cancelled) {
+          setCanViewAllBranches(false);
+        }
+      }
+    }
+
+    void checkAllBranchAccess();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    authLoading,
+    switchingContext,
+    accessLoading,
+    organization?.id,
+    canViewReports,
+    startDate,
+    endDate,
+    permissions,
+  ]);
+
+  useEffect(() => {
+    if (
+      authLoading ||
+      switchingContext ||
+      accessLoading ||
+      !organization?.id ||
+      !canViewReports
+    ) {
+      return;
+    }
+
+    void loadReport();
+  }, [
+    authLoading,
+    switchingContext,
+    accessLoading,
+    organization?.id,
+    canViewReports,
+    loadReport,
+  ]);
 
   function applyPreset(nextPreset: DatePreset) {
     setPreset(nextPreset);
@@ -235,13 +352,93 @@ export default function ReportsPage() {
     setEndDate(dates.endDate);
   }
 
-  useEffect(() => {
-    loadBranches();
-  }, [organization?.id]);
+  async function loadAllBranchesReport() {
+    if (!organization?.id || !canViewReports || !canViewAllBranches) {
+      return;
+    }
 
-  useEffect(() => {
-    loadReport();
-  }, [startDate, endDate, branchId]);
+    setLoading(true);
+    setError("");
+    setReport(null);
+
+    try {
+      const data = await getBusinessReport({
+        organizationId: organization.id,
+        startDate,
+        endDate,
+        branchId: null,
+      });
+
+      setReport(data);
+    } catch (reportError) {
+      console.error(reportError);
+
+      setCanViewAllBranches(false);
+      setBranchId(activeBranchId ?? "");
+
+      setError(
+        reportError instanceof Error
+          ? reportError.message
+          : "Unable to load the business report."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleBranchChange(nextBranchId: string) {
+    setBranchId(nextBranchId);
+
+    if (!organization?.id || !canViewReports) {
+      return;
+    }
+
+    if (!nextBranchId) {
+      if (!canViewAllBranches) {
+        setBranchId(activeBranchId ?? "");
+        return;
+      }
+
+      await loadAllBranchesReport();
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+    setReport(null);
+
+    try {
+      const data = await getBusinessReport({
+        organizationId: organization.id,
+        startDate,
+        endDate,
+        branchId: nextBranchId,
+      });
+
+      setReport(data);
+    } catch (reportError) {
+      console.error(reportError);
+
+      setBranchId(activeBranchId ?? "");
+
+      setError(
+        reportError instanceof Error
+          ? reportError.message
+          : "Unable to load the business report."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const canViewFinance = Boolean(report?.access.can_view_finance);
+
+  const selectedBranchName =
+    branchId === ""
+      ? "All branches"
+      : (branches.find((candidate) => candidate.id === branchId)?.name ??
+        branch?.name ??
+        "Current branch");
 
   const maxTrendValue = useMemo(() => {
     if (!report?.sales_trend.length) {
@@ -249,28 +446,73 @@ export default function ReportsPage() {
     }
 
     return Math.max(
-      ...report.sales_trend.map((point) =>
-        Math.max(Number(point.net_sales), Number(point.gross_profit), 0)
-      )
-    );
-  }, [report]);
+      ...report.sales_trend.map((point) => {
+        const netSales = Number(point.net_sales ?? 0);
 
-  const selectedBranchName =
-    branches.find((branch) => branch.id === branchId)?.name ?? "All branches";
+        if (!canViewFinance) {
+          return Math.max(netSales, 0);
+        }
+
+        return Math.max(netSales, Number(point.gross_profit ?? 0), 0);
+      })
+    );
+  }, [report, canViewFinance]);
 
   const hasSalesActivity =
     Number(report?.summary.transaction_count ?? 0) > 0 ||
     Number(report?.summary.refunds ?? 0) > 0;
 
+  const contextLoading = authLoading || switchingContext || accessLoading;
+
+  if (contextLoading) {
+    return (
+      <div className="flex min-h-80 items-center justify-center">
+        <div className="flex items-center gap-3 text-sm text-slate-500">
+          <RefreshCw className="h-4 w-4 animate-spin" />
+          Loading reporting access...
+        </div>
+      </div>
+    );
+  }
+
+  if (!canViewReports) {
+    return (
+      <div className="space-y-6">
+        <PageHeader
+          title="Reports & Business Intelligence"
+          description="Business reporting and performance analysis."
+        />
+
+        <SectionCard>
+          <EmptyState
+            icon={TrendingUp}
+            title="Reporting access required"
+            description="Your current role does not have permission to view business reports."
+          />
+        </SectionCard>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Reports & Business Intelligence"
-        description="Monitor sales, profitability, inventory value, supplier liabilities, products, and branch performance."
+        description={
+          canViewFinance
+            ? "Monitor sales, profitability, inventory value, supplier liabilities, products, and branch performance."
+            : "Monitor authorised sales, product, inventory quantity, and branch performance."
+        }
         actions={
           <button
             type="button"
-            onClick={loadReport}
+            onClick={() => {
+              if (branchId === "" && canViewAllBranches) {
+                void loadAllBranchesReport();
+              } else {
+                void loadReport();
+              }
+            }}
             disabled={loading}
             className="inline-flex items-center justify-center gap-2 rounded-lg border bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -345,15 +587,19 @@ export default function ReportsPage() {
 
               <select
                 value={branchId}
-                onChange={(event) => setBranchId(event.target.value)}
-                disabled={branchesLoading}
+                onChange={(event) =>
+                  void handleBranchChange(event.target.value)
+                }
+                disabled={loading}
                 className="w-full min-w-44 rounded-lg border bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-400 disabled:opacity-50"
               >
-                <option value="">All branches</option>
+                {canViewAllBranches ? (
+                  <option value="">All branches</option>
+                ) : null}
 
-                {branches.map((branch) => (
-                  <option key={branch.id} value={branch.id}>
-                    {branch.name}
+                {branches.map((candidate) => (
+                  <option key={candidate.id} value={candidate.id}>
+                    {candidate.name}
                   </option>
                 ))}
               </select>
@@ -401,48 +647,81 @@ export default function ReportsPage() {
               label="Net Sales"
               value={<Currency amount={report.summary.net_sales} />}
               icon={Banknote}
-              description={`${report.summary.transaction_count} completed transactions`}
-            />
-
-            <StatCard
-              label="Gross Profit"
-              value={<Currency amount={report.summary.gross_profit} />}
-              icon={TrendingUp}
-              description={`${formatPercent(
-                report.summary.gross_margin
-              )} gross margin`}
-            />
-
-            <StatCard
-              label="Inventory Value"
-              value={
-                <Currency amount={report.business_position.inventory_value} />
-              }
-              icon={Boxes}
               description={`${formatNumber(
-                report.business_position.inventory_quantity
-              )} units currently on hand`}
+                report.summary.transaction_count
+              )} completed transactions`}
             />
 
-            <StatCard
-              label="Supplier Payables"
-              value={
-                <Currency
-                  amount={report.business_position.supplier_outstanding}
-                />
-              }
-              icon={WalletCards}
-              description={
-                report.business_position.supplier_overdue > 0
-                  ? `${new Intl.NumberFormat("en-GB", {
-                      style: "currency",
-                      currency: "GBP",
-                    }).format(
-                      report.business_position.supplier_overdue
-                    )} overdue`
-                  : "No overdue supplier balance"
-              }
-            />
+            {canViewFinance ? (
+              <StatCard
+                label="Gross Profit"
+                value={<Currency amount={report.summary.gross_profit ?? 0} />}
+                icon={TrendingUp}
+                description={`${formatPercent(
+                  report.summary.gross_margin
+                )} gross margin`}
+              />
+            ) : (
+              <StatCard
+                label="Units Sold"
+                value={formatNumber(report.summary.units_sold)}
+                icon={Package}
+                description="Units sold in the selected period"
+              />
+            )}
+
+            {canViewFinance ? (
+              <StatCard
+                label="Inventory Value"
+                value={
+                  <Currency
+                    amount={report.business_position.inventory_value ?? 0}
+                  />
+                }
+                icon={Boxes}
+                description={`${formatNumber(
+                  report.business_position.inventory_quantity
+                )} units currently on hand`}
+              />
+            ) : (
+              <StatCard
+                label="Units on Hand"
+                value={formatNumber(
+                  report.business_position.inventory_quantity
+                )}
+                icon={Boxes}
+                description="Current inventory quantity"
+              />
+            )}
+
+            {canViewFinance ? (
+              <StatCard
+                label="Supplier Payables"
+                value={
+                  <Currency
+                    amount={report.business_position.supplier_outstanding ?? 0}
+                  />
+                }
+                icon={WalletCards}
+                description={
+                  Number(report.business_position.supplier_overdue ?? 0) > 0
+                    ? `${new Intl.NumberFormat("en-GB", {
+                        style: "currency",
+                        currency: "GBP",
+                      }).format(
+                        Number(report.business_position.supplier_overdue ?? 0)
+                      )} overdue`
+                    : "No overdue supplier balance"
+                }
+              />
+            ) : (
+              <StatCard
+                label="Average Order"
+                value={<Currency amount={report.summary.average_order_value} />}
+                icon={ShoppingCart}
+                description="Average completed transaction"
+              />
+            )}
           </div>
 
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -460,12 +739,21 @@ export default function ReportsPage() {
               description="Completed customer returns"
             />
 
-            <StatCard
-              label="Net COGS"
-              value={<Currency amount={report.summary.net_cogs} />}
-              icon={Package}
-              description="Cost of goods after returns"
-            />
+            {canViewFinance ? (
+              <StatCard
+                label="Net COGS"
+                value={<Currency amount={report.summary.net_cogs ?? 0} />}
+                icon={Package}
+                description="Cost of goods after returns"
+              />
+            ) : (
+              <StatCard
+                label="Transactions"
+                value={formatNumber(report.summary.transaction_count)}
+                icon={ReceiptText}
+                description="Completed transactions"
+              />
+            )}
 
             <StatCard
               label="Average Order"
@@ -477,11 +765,17 @@ export default function ReportsPage() {
             />
           </div>
 
-          <div className="grid gap-4 xl:grid-cols-3">
+          <div
+            className={`grid gap-4 ${canViewFinance ? "xl:grid-cols-3" : ""}`}
+          >
             <SectionCard
-              title="Sales & Profit Trend"
-              description="Net sales and gross profit across the selected reporting period."
-              className="xl:col-span-2"
+              title={canViewFinance ? "Sales & Profit Trend" : "Sales Trend"}
+              description={
+                canViewFinance
+                  ? "Net sales and gross profit across the selected reporting period."
+                  : "Net sales across the selected reporting period."
+              }
+              className={canViewFinance ? "xl:col-span-2" : ""}
             >
               {!hasSalesActivity ? (
                 <EmptyState
@@ -497,10 +791,12 @@ export default function ReportsPage() {
                       Net sales
                     </span>
 
-                    <span className="inline-flex items-center gap-2">
-                      <span className="h-2.5 w-2.5 rounded-full bg-slate-300" />
-                      Gross profit
-                    </span>
+                    {canViewFinance ? (
+                      <span className="inline-flex items-center gap-2">
+                        <span className="h-2.5 w-2.5 rounded-full bg-slate-300" />
+                        Gross profit
+                      </span>
+                    ) : null}
                   </div>
 
                   <div className="overflow-x-auto">
@@ -518,16 +814,17 @@ export default function ReportsPage() {
                           maxTrendValue > 0
                             ? Math.max(
                                 (Number(point.net_sales) / maxTrendValue) * 220,
-                                point.net_sales > 0 ? 4 : 0
+                                Number(point.net_sales) > 0 ? 4 : 0
                               )
                             : 0;
 
+                        const profitValue = Number(point.gross_profit ?? 0);
+
                         const profitHeight =
-                          maxTrendValue > 0
+                          canViewFinance && maxTrendValue > 0
                             ? Math.max(
-                                (Number(point.gross_profit) / maxTrendValue) *
-                                  220,
-                                point.gross_profit > 0 ? 4 : 0
+                                (profitValue / maxTrendValue) * 220,
+                                profitValue > 0 ? 4 : 0
                               )
                             : 0;
 
@@ -542,16 +839,22 @@ export default function ReportsPage() {
                                   point.net_sales
                                 ).toFixed(2)}`}
                                 className="w-2.5 rounded-t bg-slate-900 transition-opacity group-hover:opacity-75"
-                                style={{ height: `${salesHeight}px` }}
+                                style={{
+                                  height: `${salesHeight}px`,
+                                }}
                               />
 
-                              <div
-                                title={`Gross profit: £${Number(
-                                  point.gross_profit
-                                ).toFixed(2)}`}
-                                className="w-2.5 rounded-t bg-slate-300 transition-opacity group-hover:opacity-75"
-                                style={{ height: `${profitHeight}px` }}
-                              />
+                              {canViewFinance ? (
+                                <div
+                                  title={`Gross profit: £${profitValue.toFixed(
+                                    2
+                                  )}`}
+                                  className="w-2.5 rounded-t bg-slate-300 transition-opacity group-hover:opacity-75"
+                                  style={{
+                                    height: `${profitHeight}px`,
+                                  }}
+                                />
+                              ) : null}
                             </div>
 
                             <span className="mt-2 whitespace-nowrap text-[10px] text-slate-400">
@@ -566,92 +869,102 @@ export default function ReportsPage() {
               )}
             </SectionCard>
 
-            <SectionCard
-              title="Profitability"
-              description="Financial performance for the selected period."
-            >
-              <div className="divide-y">
-                <MetricRow
-                  label="Gross sales"
-                  value={<Currency amount={report.summary.gross_sales} />}
-                />
+            {canViewFinance ? (
+              <SectionCard
+                title="Profitability"
+                description="Financial performance for the selected period."
+              >
+                <div className="divide-y">
+                  <MetricRow
+                    label="Gross sales"
+                    value={<Currency amount={report.summary.gross_sales} />}
+                  />
 
-                <MetricRow
-                  label="Returns / refunds"
-                  value={
-                    <span className="text-red-600">
-                      -<Currency amount={report.summary.refunds} />
-                    </span>
-                  }
-                />
+                  <MetricRow
+                    label="Returns / refunds"
+                    value={
+                      <span className="text-red-600">
+                        -
+                        <Currency amount={report.summary.refunds} />
+                      </span>
+                    }
+                  />
 
-                <MetricRow
-                  label="Net sales"
-                  strong
-                  value={<Currency amount={report.summary.net_sales} />}
-                />
+                  <MetricRow
+                    label="Net sales"
+                    strong
+                    value={<Currency amount={report.summary.net_sales} />}
+                  />
 
-                <MetricRow
-                  label="Gross COGS"
-                  value={<Currency amount={report.summary.gross_cogs} />}
-                />
+                  <MetricRow
+                    label="Gross COGS"
+                    value={<Currency amount={report.summary.gross_cogs ?? 0} />}
+                  />
 
-                <MetricRow
-                  label="Returned COGS"
-                  value={
-                    <span className="text-emerald-700">
-                      -<Currency amount={report.summary.returned_cogs} />
-                    </span>
-                  }
-                />
+                  <MetricRow
+                    label="Returned COGS"
+                    value={
+                      <span className="text-emerald-700">
+                        -
+                        <Currency amount={report.summary.returned_cogs ?? 0} />
+                      </span>
+                    }
+                  />
 
-                <MetricRow
-                  label="Net COGS"
-                  strong
-                  value={<Currency amount={report.summary.net_cogs} />}
-                />
+                  <MetricRow
+                    label="Net COGS"
+                    strong
+                    value={<Currency amount={report.summary.net_cogs ?? 0} />}
+                  />
 
-                <MetricRow
-                  label="Gross profit"
-                  strong
-                  value={<Currency amount={report.summary.gross_profit} />}
-                />
+                  <MetricRow
+                    label="Gross profit"
+                    strong
+                    value={
+                      <Currency amount={report.summary.gross_profit ?? 0} />
+                    }
+                  />
 
-                <MetricRow
-                  label="Gross margin"
-                  strong
-                  value={
-                    <span
-                      className={getMarginTone(report.summary.gross_margin)}
-                    >
-                      {formatPercent(report.summary.gross_margin)}
-                    </span>
-                  }
-                />
-              </div>
-
-              <div className="mt-5 grid grid-cols-2 gap-3">
-                <div className="rounded-lg bg-slate-50 p-3">
-                  <p className="text-xs text-slate-500">Discounts</p>
-                  <p className="mt-1 font-semibold text-slate-900">
-                    <Currency amount={report.summary.discount_amount} />
-                  </p>
+                  <MetricRow
+                    label="Gross margin"
+                    strong
+                    value={
+                      <span
+                        className={getMarginTone(report.summary.gross_margin)}
+                      >
+                        {formatPercent(report.summary.gross_margin)}
+                      </span>
+                    }
+                  />
                 </div>
 
-                <div className="rounded-lg bg-slate-50 p-3">
-                  <p className="text-xs text-slate-500">VAT</p>
-                  <p className="mt-1 font-semibold text-slate-900">
-                    <Currency amount={report.summary.vat_amount} />
-                  </p>
+                <div className="mt-5 grid grid-cols-2 gap-3">
+                  <div className="rounded-lg bg-slate-50 p-3">
+                    <p className="text-xs text-slate-500">Discounts</p>
+                    <p className="mt-1 font-semibold text-slate-900">
+                      <Currency amount={report.summary.discount_amount} />
+                    </p>
+                  </div>
+
+                  <div className="rounded-lg bg-slate-50 p-3">
+                    <p className="text-xs text-slate-500">VAT</p>
+                    <p className="mt-1 font-semibold text-slate-900">
+                      <Currency amount={report.summary.vat_amount ?? 0} />
+                    </p>
+                  </div>
                 </div>
-              </div>
-            </SectionCard>
+              </SectionCard>
+            ) : null}
           </div>
 
           <div className="grid gap-4 xl:grid-cols-2">
             <SectionCard
               title="Top Products"
-              description="Highest revenue products during the selected period."
+              description={
+                canViewFinance
+                  ? "Highest revenue products and profitability during the selected period."
+                  : "Highest revenue products during the selected period."
+              }
             >
               {report.top_products.length === 0 ? (
                 <EmptyState
@@ -667,8 +980,17 @@ export default function ReportsPage() {
                         <th className="pb-3 font-medium">Product</th>
                         <th className="pb-3 text-right font-medium">Units</th>
                         <th className="pb-3 text-right font-medium">Revenue</th>
-                        <th className="pb-3 text-right font-medium">Profit</th>
-                        <th className="pb-3 text-right font-medium">Margin</th>
+
+                        {canViewFinance ? (
+                          <>
+                            <th className="pb-3 text-right font-medium">
+                              Profit
+                            </th>
+                            <th className="pb-3 text-right font-medium">
+                              Margin
+                            </th>
+                          </>
+                        ) : null}
                       </tr>
                     </thead>
 
@@ -692,17 +1014,21 @@ export default function ReportsPage() {
                             <Currency amount={product.revenue} />
                           </td>
 
-                          <td className="py-3 text-right font-medium text-slate-900">
-                            <Currency amount={product.gross_profit} />
-                          </td>
+                          {canViewFinance ? (
+                            <>
+                              <td className="py-3 text-right font-medium text-slate-900">
+                                <Currency amount={product.gross_profit ?? 0} />
+                              </td>
 
-                          <td
-                            className={`py-3 text-right font-medium ${getMarginTone(
-                              product.gross_margin
-                            )}`}
-                          >
-                            {formatPercent(product.gross_margin)}
-                          </td>
+                              <td
+                                className={`py-3 text-right font-medium ${getMarginTone(
+                                  product.gross_margin
+                                )}`}
+                              >
+                                {formatPercent(product.gross_margin)}
+                              </td>
+                            </>
+                          ) : null}
                         </tr>
                       ))}
                     </tbody>
@@ -713,7 +1039,11 @@ export default function ReportsPage() {
 
             <SectionCard
               title="Branch Performance"
-              description="Compare revenue and profitability across locations."
+              description={
+                canViewFinance
+                  ? "Compare revenue and profitability across authorised locations."
+                  : "Compare revenue and transaction activity across authorised locations."
+              }
             >
               {report.branch_performance.length === 0 ? (
                 <EmptyState
@@ -731,42 +1061,57 @@ export default function ReportsPage() {
                         <th className="pb-3 text-right font-medium">
                           Transactions
                         </th>
-                        <th className="pb-3 text-right font-medium">Profit</th>
-                        <th className="pb-3 text-right font-medium">Margin</th>
+
+                        {canViewFinance ? (
+                          <>
+                            <th className="pb-3 text-right font-medium">
+                              Profit
+                            </th>
+                            <th className="pb-3 text-right font-medium">
+                              Margin
+                            </th>
+                          </>
+                        ) : null}
                       </tr>
                     </thead>
 
                     <tbody className="divide-y">
-                      {report.branch_performance.map((branch) => (
-                        <tr key={branch.branch_id}>
+                      {report.branch_performance.map((branchPerformance) => (
+                        <tr key={branchPerformance.branch_id}>
                           <td className="py-3 pr-4">
                             <div className="flex items-center gap-2">
                               <Building2 className="h-4 w-4 text-slate-400" />
                               <span className="font-medium text-slate-900">
-                                {branch.branch_name}
+                                {branchPerformance.branch_name}
                               </span>
                             </div>
                           </td>
 
                           <td className="py-3 text-right font-medium text-slate-900">
-                            <Currency amount={branch.net_sales} />
+                            <Currency amount={branchPerformance.net_sales} />
                           </td>
 
                           <td className="py-3 text-right text-slate-600">
-                            {formatNumber(branch.transactions)}
+                            {formatNumber(branchPerformance.transactions)}
                           </td>
 
-                          <td className="py-3 text-right font-medium text-slate-900">
-                            <Currency amount={branch.gross_profit} />
-                          </td>
+                          {canViewFinance ? (
+                            <>
+                              <td className="py-3 text-right font-medium text-slate-900">
+                                <Currency
+                                  amount={branchPerformance.gross_profit ?? 0}
+                                />
+                              </td>
 
-                          <td
-                            className={`py-3 text-right font-medium ${getMarginTone(
-                              branch.gross_margin
-                            )}`}
-                          >
-                            {formatPercent(branch.gross_margin)}
-                          </td>
+                              <td
+                                className={`py-3 text-right font-medium ${getMarginTone(
+                                  branchPerformance.gross_margin
+                                )}`}
+                              >
+                                {formatPercent(branchPerformance.gross_margin)}
+                              </td>
+                            </>
+                          ) : null}
                         </tr>
                       ))}
                     </tbody>
@@ -776,7 +1121,11 @@ export default function ReportsPage() {
             </SectionCard>
           </div>
 
-          <div className="grid gap-4 xl:grid-cols-3">
+          <div
+            className={`grid gap-4 ${
+              canViewFinance ? "xl:grid-cols-3" : "xl:grid-cols-2"
+            }`}
+          >
             <SectionCard
               title="Sales Activity"
               description="Operational sales metrics."
@@ -808,7 +1157,7 @@ export default function ReportsPage() {
 
             <SectionCard
               title="Inventory Position"
-              description="Current inventory position for the selected branch scope."
+              description="Current inventory quantity for the selected reporting scope."
             >
               <div className="divide-y">
                 <MetricRow
@@ -818,66 +1167,78 @@ export default function ReportsPage() {
                   )}
                 />
 
-                <MetricRow
-                  label="Inventory value"
-                  strong
-                  value={
-                    <Currency
-                      amount={report.business_position.inventory_value}
-                    />
-                  }
-                />
+                {canViewFinance ? (
+                  <MetricRow
+                    label="Inventory value"
+                    strong
+                    value={
+                      <Currency
+                        amount={report.business_position.inventory_value ?? 0}
+                      />
+                    }
+                  />
+                ) : null}
               </div>
 
               <div className="mt-5 rounded-lg bg-slate-50 p-3 text-xs leading-5 text-slate-500">
-                Inventory position is based on current quantity on hand and
-                weighted average inventory cost.
+                {canViewFinance
+                  ? "Inventory position is based on current quantity on hand and weighted average inventory cost."
+                  : "Inventory quantity represents the current units on hand within the authorised reporting scope."}
               </div>
             </SectionCard>
 
-            <SectionCard
-              title="Accounts Payable"
-              description="Current supplier liability position."
-            >
-              <div className="divide-y">
-                <MetricRow
-                  label="Outstanding"
-                  strong
-                  value={
-                    <Currency
-                      amount={report.business_position.supplier_outstanding}
-                    />
-                  }
-                />
-
-                <MetricRow
-                  label="Overdue"
-                  value={
-                    <span
-                      className={
-                        report.business_position.supplier_overdue > 0
-                          ? "font-semibold text-red-600"
-                          : ""
-                      }
-                    >
+            {canViewFinance ? (
+              <SectionCard
+                title="Accounts Payable"
+                description="Current supplier liability position."
+              >
+                <div className="divide-y">
+                  <MetricRow
+                    label="Outstanding"
+                    strong
+                    value={
                       <Currency
-                        amount={report.business_position.supplier_overdue}
+                        amount={
+                          report.business_position.supplier_outstanding ?? 0
+                        }
                       />
-                    </span>
-                  }
-                />
-              </div>
+                    }
+                  />
 
-              <div className="mt-5 flex items-start gap-2 rounded-lg bg-slate-50 p-3 text-xs leading-5 text-slate-500">
-                {report.business_position.supplier_overdue > 0 ? (
-                  <ArrowDownRight className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
-                ) : (
-                  <ArrowUpRight className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
-                )}
-                Supplier balances represent the current payable position, not a
-                historical balance at the report end date.
-              </div>
-            </SectionCard>
+                  <MetricRow
+                    label="Overdue"
+                    value={
+                      <span
+                        className={
+                          Number(
+                            report.business_position.supplier_overdue ?? 0
+                          ) > 0
+                            ? "font-semibold text-red-600"
+                            : ""
+                        }
+                      >
+                        <Currency
+                          amount={
+                            report.business_position.supplier_overdue ?? 0
+                          }
+                        />
+                      </span>
+                    }
+                  />
+                </div>
+
+                <div className="mt-5 flex items-start gap-2 rounded-lg bg-slate-50 p-3 text-xs leading-5 text-slate-500">
+                  {Number(report.business_position.supplier_overdue ?? 0) >
+                  0 ? (
+                    <ArrowDownRight className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
+                  ) : (
+                    <ArrowUpRight className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                  )}
+                  Supplier balances represent the current payable position, not
+                  a historical balance at the report end date.
+                </div>
+              </SectionCard>
+            ) : null}
           </div>
 
           <div className="rounded-xl border bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-500">
@@ -885,10 +1246,9 @@ export default function ReportsPage() {
               <ReceiptText className="mt-0.5 h-4 w-4 shrink-0" />
 
               <p>
-                Sales and profitability use the selected reporting period.
-                Inventory and supplier payable figures represent the current
-                business position. Historical COGS uses the cost captured on
-                each original sale item.
+                {canViewFinance
+                  ? "Sales and profitability use the selected reporting period. Inventory and supplier payable figures represent the current business position. Historical COGS uses the cost captured on each original sale item."
+                  : "Sales metrics use the selected reporting period. Inventory quantity represents the current authorised business position. Financial cost, profit, valuation, VAT, and supplier liability information is restricted for this role."}
               </p>
             </div>
           </div>

@@ -18,6 +18,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { RecordSupplierPaymentDialog } from "@/components/accounts-payable/record-supplier-payment-dialog";
+import { useAuth } from "@/components/auth-provider";
 
 import {
   Currency,
@@ -82,21 +83,34 @@ export default function SupplierInvoiceDetailsPage() {
 
   const supplierInvoiceId = params.supplierInvoiceId;
 
+  const { organization, branch, switchingContext, accessLoading } = useAuth();
+
   const [invoice, setInvoice] = useState<SupplierInvoiceDetails | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const loadInvoice = useCallback(async () => {
-    if (!supplierInvoiceId) return;
+    if (!supplierInvoiceId || !organization?.id || !branch?.id) {
+      setInvoice(null);
+      setLoading(false);
+      return;
+    }
 
     try {
+      setLoading(true);
       setError(null);
+      setInvoice(null);
 
-      const data = await getSupplierInvoiceDetails(supplierInvoiceId);
+      const data = await getSupplierInvoiceDetails(supplierInvoiceId, {
+        organizationId: organization.id,
+        branchId: branch.id,
+      });
 
       setInvoice(data);
     } catch (loadError) {
+      setInvoice(null);
+
       setError(
         loadError instanceof Error
           ? loadError.message
@@ -105,11 +119,15 @@ export default function SupplierInvoiceDetailsPage() {
     } finally {
       setLoading(false);
     }
-  }, [supplierInvoiceId]);
+  }, [supplierInvoiceId, organization?.id, branch?.id]);
 
   useEffect(() => {
+    if (switchingContext || accessLoading) {
+      return;
+    }
+
     loadInvoice();
-  }, [loadInvoice]);
+  }, [loadInvoice, switchingContext, accessLoading]);
 
   const paymentPercentage = useMemo(() => {
     if (!invoice || invoice.total_amount <= 0) {
@@ -126,10 +144,30 @@ export default function SupplierInvoiceDetailsPage() {
     window.print();
   }
 
-  if (loading) {
+  const isLoading = loading || switchingContext || accessLoading;
+
+  if (isLoading) {
     return (
       <div className="flex min-h-[400px] items-center justify-center text-sm text-slate-500">
         Loading supplier invoice...
+      </div>
+    );
+  }
+
+  if (!organization?.id || !branch?.id) {
+    return (
+      <div className="space-y-4">
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+          Select an organisation and branch before viewing supplier invoices.
+        </div>
+
+        <Link
+          href="/accounts-payable"
+          className="inline-flex items-center gap-2 text-sm font-medium text-slate-700 hover:text-slate-950"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to Accounts Payable
+        </Link>
       </div>
     );
   }
@@ -138,7 +176,8 @@ export default function SupplierInvoiceDetailsPage() {
     return (
       <div className="space-y-4">
         <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-          {error}
+          This supplier invoice could not be loaded in the currently selected
+          organisation and branch.
         </div>
 
         <Link

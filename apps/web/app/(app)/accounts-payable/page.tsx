@@ -11,6 +11,7 @@ import {
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { useAuth } from "@/components/auth-provider";
 import {
   Currency,
   EmptyState,
@@ -154,6 +155,8 @@ const statusOptions: Array<{
 ];
 
 export default function AccountsPayablePage() {
+  const { organization, branch, switchingContext, accessLoading } = useAuth();
+
   const [invoices, setInvoices] = useState<SupplierInvoiceRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -165,14 +168,25 @@ export default function AccountsPayablePage() {
   >("ALL");
 
   const loadInvoices = useCallback(async () => {
+    if (!organization?.id || !branch?.id) {
+      setInvoices([]);
+      setLoading(false);
+      return;
+    }
+
     try {
       setLoading(true);
       setError(null);
 
-      const data = await getSupplierInvoices();
+      const data = await getSupplierInvoices({
+        organizationId: organization.id,
+        branchId: branch.id,
+      });
 
       setInvoices(data);
     } catch (loadError) {
+      setInvoices([]);
+
       setError(
         loadError instanceof Error
           ? loadError.message
@@ -181,11 +195,15 @@ export default function AccountsPayablePage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [organization?.id, branch?.id]);
 
   useEffect(() => {
+    if (switchingContext || accessLoading) {
+      return;
+    }
+
     loadInvoices();
-  }, [loadInvoices]);
+  }, [loadInvoices, switchingContext, accessLoading]);
 
   const summary = useMemo(() => {
     return invoices.reduce(
@@ -241,6 +259,8 @@ export default function AccountsPayablePage() {
       ].some((value) => value.toLowerCase().includes(normalizedSearch));
     });
   }, [invoices, search, statusFilter]);
+
+  const isLoading = loading || switchingContext || accessLoading;
 
   return (
     <div className="space-y-6">
@@ -330,15 +350,21 @@ export default function AccountsPayablePage() {
           </select>
         </div>
 
-        {loading ? (
+        {isLoading ? (
           <div className="flex min-h-[300px] items-center justify-center px-6 py-14 text-sm text-slate-500">
             Loading supplier invoices...
           </div>
+        ) : !organization?.id || !branch?.id ? (
+          <EmptyState
+            icon={FileText}
+            title="No active workspace"
+            description="Select an organisation and branch to view supplier invoices."
+          />
         ) : invoices.length === 0 ? (
           <EmptyState
             icon={FileText}
             title="No supplier invoices yet"
-            description="Supplier invoices will appear here once they are created from your purchasing workflow."
+            description="There are no supplier invoices for the currently selected organisation and branch."
           />
         ) : filteredInvoices.length === 0 ? (
           <EmptyState

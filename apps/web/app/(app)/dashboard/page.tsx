@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useAuth } from "@/components/auth-provider";
 import {
@@ -34,7 +34,6 @@ type InventoryAlert = {
   id: string;
   quantity_on_hand: number;
   quantity_available: number;
-  average_cost: number;
   product: {
     id: string;
     name: string;
@@ -56,15 +55,8 @@ function formatNumber(value: number) {
   return new Intl.NumberFormat("en-GB").format(Number(value || 0));
 }
 
-function formatPercent(value: number) {
-  return `${Number(value || 0).toFixed(1)}%`;
-}
-
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat("en-GB", {
-    day: "2-digit",
-    month: "short",
-  }).format(new Date(`${value}T00:00:00`));
+function formatPercent(value: number | null | undefined) {
+  return `${Number(value ?? 0).toFixed(1)}%`;
 }
 
 function getJoinedRecord<T>(value: unknown): T | null {
@@ -81,7 +73,15 @@ function getJoinedRecord<T>(value: unknown): T | null {
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { organization, branch, loading: authLoading } = useAuth();
+
+  const {
+    organization,
+    branch,
+    loading: authLoading,
+    switchingContext,
+    accessLoading,
+    hasPermission,
+  } = useAuth();
 
   const [report, setReport] = useState<BusinessReport | null>(null);
   const [inventoryAlerts, setInventoryAlerts] = useState<InventoryAlert[]>([]);
@@ -90,54 +90,78 @@ export default function DashboardPage() {
 
   const reportDate = useMemo(() => today(), []);
 
+  const canViewReports = hasPermission("reports.view");
+  const canViewInventory = hasPermission("inventory.view");
+  const canViewSales = hasPermission("sales.view");
+  const canCreateSales = hasPermission("sales.create");
+
+  const canViewFinance =
+    canViewReports && Boolean(report?.access.can_view_finance);
+
   useEffect(() => {
     if (!authLoading && !organization) {
       router.push("/onboarding");
     }
   }, [authLoading, organization, router]);
 
-  async function loadDashboard() {
-    if (!organization?.id) {
+  const loadDashboard = useCallback(async () => {
+    if (!organization?.id || switchingContext || accessLoading) {
       return;
     }
 
     setLoading(true);
     setError("");
 
+    // Clear the previous workspace immediately so data from another
+    // organisation or branch cannot remain visible during a switch.
+    setReport(null);
+    setInventoryAlerts([]);
+
     try {
-      const reportPromise = getBusinessReport({
-        startDate: reportDate,
-        endDate: reportDate,
-        branchId: branch?.id ?? null,
-      });
+      const reportPromise: Promise<BusinessReport | null> = canViewReports
+        ? getBusinessReport({
+            organizationId: organization.id,
+            startDate: reportDate,
+            endDate: reportDate,
+            branchId: branch?.id ?? null,
+          })
+        : Promise.resolve(null);
 
-      let inventoryQuery = supabase
-        .from("inventory")
-        .select(
-          `
-            id,
-            quantity_on_hand,
-            quantity_available,
-            average_cost,
-            products (
-              id,
-              name,
-              sku
-            )
-          `
-        )
-        .eq("organization_id", organization.id)
-        .lte("quantity_available", 5)
-        .order("quantity_available", { ascending: true })
-        .limit(6);
+      const inventoryPromise = canViewInventory
+        ? (() => {
+            let query = supabase
+              .from("inventory")
+              .select(
+                `
+                  id,
+                  quantity_on_hand,
+                  quantity_available,
+                  products (
+                    id,
+                    name,
+                    sku
+                  )
+                `
+              )
+              .eq("organization_id", organization.id)
+              .lte("quantity_available", 5)
+              .order("quantity_available", { ascending: true })
+              .limit(6);
 
-      if (branch?.id) {
-        inventoryQuery = inventoryQuery.eq("branch_id", branch.id);
-      }
+            if (branch?.id) {
+              query = query.eq("branch_id", branch.id);
+            }
+
+            return query;
+          })()
+        : Promise.resolve({
+            data: [],
+            error: null,
+          });
 
       const [reportResult, inventoryResult] = await Promise.all([
         reportPromise,
-        inventoryQuery,
+        inventoryPromise,
       ]);
 
       setReport(reportResult);
@@ -158,7 +182,6 @@ export default function DashboardPage() {
               id: row.id,
               quantity_on_hand: Number(row.quantity_on_hand ?? 0),
               quantity_available: Number(row.quantity_available ?? 0),
-              average_cost: Number(row.average_cost ?? 0),
               product,
             };
           }
@@ -169,6 +192,8 @@ export default function DashboardPage() {
     } catch (dashboardError) {
       console.error(dashboardError);
 
+      setReport(null);
+
       setError(
         dashboardError instanceof Error
           ? dashboardError.message
@@ -177,23 +202,23 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [
+    organization?.id,
+    branch?.id,
+    switchingContext,
+    accessLoading,
+    canViewReports,
+    canViewInventory,
+    reportDate,
+  ]);
 
   useEffect(() => {
-    loadDashboard();
-  }, [organization?.id, branch?.id]);
-
-  const maxTrendValue = useMemo(() => {
-    if (!report?.sales_trend.length) {
-      return 0;
+    if (authLoading || switchingContext || accessLoading) {
+      return;
     }
 
-    return Math.max(
-      ...report.sales_trend.map((point) =>
-        Math.max(Number(point.net_sales), Number(point.gross_profit), 0)
-      )
-    );
-  }, [report]);
+    void loadDashboard();
+  }, [authLoading, switchingContext, accessLoading, loadDashboard]);
 
   const lowStockCount = inventoryAlerts.length;
 
@@ -201,7 +226,9 @@ export default function DashboardPage() {
     Number(report?.summary.transaction_count ?? 0) > 0 ||
     Number(report?.summary.refunds ?? 0) > 0;
 
-  if (authLoading) {
+  const isLoading = authLoading || switchingContext || accessLoading || loading;
+
+  if (authLoading || switchingContext || accessLoading) {
     return (
       <div className="flex min-h-80 items-center justify-center">
         <div className="flex items-center gap-3 text-sm text-slate-500">
@@ -219,14 +246,14 @@ export default function DashboardPage() {
         description={
           branch?.name
             ? `Live business overview for ${branch.name}.`
-            : "Live overview of sales, profitability, inventory and business activity."
+            : "Live overview of your current business workspace."
         }
         actions={
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={loadDashboard}
-              disabled={loading}
+              onClick={() => void loadDashboard()}
+              disabled={isLoading}
               className="inline-flex items-center justify-center gap-2 rounded-lg border bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <RefreshCw
@@ -235,13 +262,15 @@ export default function DashboardPage() {
               Refresh
             </button>
 
-            <Link
-              href="/pos"
-              className="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
-            >
-              Open POS
-              <ArrowUpRight className="ml-2 h-4 w-4" />
-            </Link>
+            {canCreateSales ? (
+              <Link
+                href="/pos"
+                className="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+              >
+                Open POS
+                <ArrowUpRight className="ml-2 h-4 w-4" />
+              </Link>
+            ) : null}
           </div>
         }
       />
@@ -257,7 +286,7 @@ export default function DashboardPage() {
         </div>
       ) : null}
 
-      {loading && !report ? (
+      {loading && !report && canViewReports ? (
         <SectionCard contentClassName="p-12">
           <div className="flex items-center justify-center gap-3 text-sm text-slate-500">
             <RefreshCw className="h-4 w-4 animate-spin" />
@@ -278,45 +307,76 @@ export default function DashboardPage() {
               )} transactions today`}
             />
 
-            <StatCard
-              label="Today's Gross Profit"
-              value={<Currency amount={report.summary.gross_profit} />}
-              icon={TrendingUp}
-              description={`${formatPercent(
-                report.summary.gross_margin
-              )} gross margin`}
-            />
+            {canViewFinance ? (
+              <StatCard
+                label="Today's Gross Profit"
+                value={<Currency amount={report.summary.gross_profit ?? 0} />}
+                icon={TrendingUp}
+                description={`${formatPercent(
+                  report.summary.gross_margin
+                )} gross margin`}
+              />
+            ) : (
+              <StatCard
+                label="Units Sold"
+                value={formatNumber(report.summary.units_sold)}
+                icon={Package}
+                description="Units sold today"
+              />
+            )}
 
-            <StatCard
-              label="Inventory Value"
-              value={
-                <Currency amount={report.business_position.inventory_value} />
-              }
-              icon={Boxes}
-              description={`${formatNumber(
-                report.business_position.inventory_quantity
-              )} units currently on hand`}
-            />
+            {canViewFinance ? (
+              <StatCard
+                label="Inventory Value"
+                value={
+                  <Currency
+                    amount={report.business_position.inventory_value ?? 0}
+                  />
+                }
+                icon={Boxes}
+                description={`${formatNumber(
+                  report.business_position.inventory_quantity
+                )} units currently on hand`}
+              />
+            ) : (
+              <StatCard
+                label="Units on Hand"
+                value={formatNumber(
+                  report.business_position.inventory_quantity
+                )}
+                icon={Boxes}
+                description="Current inventory quantity"
+              />
+            )}
 
-            <StatCard
-              label="Supplier Payables"
-              value={
-                <Currency
-                  amount={report.business_position.supplier_outstanding}
-                />
-              }
-              icon={WalletCards}
-              description={
-                report.business_position.supplier_overdue > 0
-                  ? `${new Intl.NumberFormat("en-GB", {
-                      style: "currency",
-                      currency: "GBP",
-                    }).format(
-                      report.business_position.supplier_overdue
-                    )} overdue`
-                  : "No overdue supplier balance"
-              }
-            />
+            {canViewFinance ? (
+              <StatCard
+                label="Supplier Payables"
+                value={
+                  <Currency
+                    amount={report.business_position.supplier_outstanding ?? 0}
+                  />
+                }
+                icon={WalletCards}
+                description={
+                  Number(report.business_position.supplier_overdue ?? 0) > 0
+                    ? `${new Intl.NumberFormat("en-GB", {
+                        style: "currency",
+                        currency: "GBP",
+                      }).format(
+                        Number(report.business_position.supplier_overdue ?? 0)
+                      )} overdue`
+                    : "No overdue supplier balance"
+                }
+              />
+            ) : (
+              <StatCard
+                label="Average Order"
+                value={<Currency amount={report.summary.average_order_value} />}
+                icon={ShoppingCart}
+                description="Average transaction value today"
+              />
+            )}
           </div>
 
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -334,48 +394,76 @@ export default function DashboardPage() {
               description="Customer refunds today"
             />
 
-            <StatCard
-              label="Net COGS"
-              value={<Currency amount={report.summary.net_cogs} />}
-              icon={Package}
-              description="Cost of goods after returns"
-            />
+            {canViewFinance ? (
+              <StatCard
+                label="Net COGS"
+                value={<Currency amount={report.summary.net_cogs ?? 0} />}
+                icon={Package}
+                description="Cost of goods after returns"
+              />
+            ) : (
+              <StatCard
+                label="Transactions"
+                value={formatNumber(report.summary.transaction_count)}
+                icon={ReceiptText}
+                description="Completed transactions today"
+              />
+            )}
 
-            <StatCard
-              label="Low Stock"
-              value={formatNumber(lowStockCount)}
-              icon={AlertTriangle}
-              description="Products with 5 or fewer available"
-            />
+            {canViewInventory ? (
+              <StatCard
+                label="Low Stock"
+                value={formatNumber(lowStockCount)}
+                icon={AlertTriangle}
+                description="Products with 5 or fewer available"
+              />
+            ) : (
+              <StatCard
+                label="Net Sales"
+                value={<Currency amount={report.summary.net_sales} />}
+                icon={Banknote}
+                description="Sales after customer refunds"
+              />
+            )}
           </div>
 
-          <div className="grid gap-4 xl:grid-cols-3">
+          <div
+            className={`grid gap-4 ${canViewInventory ? "xl:grid-cols-3" : ""}`}
+          >
             <SectionCard
               title="Today's Performance"
-              description="Sales and profitability for the current trading day."
-              actions={
-                <Link
-                  href="/reports"
-                  className="inline-flex items-center gap-1 text-sm font-medium text-slate-600 hover:text-slate-900"
-                >
-                  Full reports
-                  <ArrowRight className="h-4 w-4" />
-                </Link>
+              description={
+                canViewFinance
+                  ? "Sales and profitability for the current trading day."
+                  : "Sales activity for the current trading day."
               }
-              className="xl:col-span-2"
+              actions={
+                canViewReports ? (
+                  <Link
+                    href="/reports"
+                    className="inline-flex items-center gap-1 text-sm font-medium text-slate-600 hover:text-slate-900"
+                  >
+                    Full reports
+                    <ArrowRight className="h-4 w-4" />
+                  </Link>
+                ) : undefined
+              }
+              className={canViewInventory ? "xl:col-span-2" : ""}
             >
               {!hasActivity ? (
                 <EmptyState
                   icon={TrendingUp}
                   title="No trading activity today"
-                  description="Sales, returns and profitability will appear here as transactions are completed."
+                  description="Sales and returns will appear here as transactions are completed."
                   action={
-                    <Link
-                      href="/pos"
-                      className="inline-flex items-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
-                    >
-                      Open POS
-                    </Link>
+                    canCreateSales ? (
+                      <Link
+                        href="/pos"
+                        className="inline-flex items-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+                      >
+                        Open POS
+                      </Link>
+                    ) : undefined
                   }
                 />
               ) : (
@@ -390,14 +478,25 @@ export default function DashboardPage() {
                       </p>
                     </div>
 
-                    <div className="rounded-xl bg-slate-50 p-4">
-                      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                        Gross Profit
-                      </p>
-                      <p className="mt-2 text-xl font-semibold text-slate-900">
-                        <Currency amount={report.summary.gross_profit} />
-                      </p>
-                    </div>
+                    {canViewFinance ? (
+                      <div className="rounded-xl bg-slate-50 p-4">
+                        <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                          Gross Profit
+                        </p>
+                        <p className="mt-2 text-xl font-semibold text-slate-900">
+                          <Currency amount={report.summary.gross_profit ?? 0} />
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="rounded-xl bg-slate-50 p-4">
+                        <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                          Units Sold
+                        </p>
+                        <p className="mt-2 text-xl font-semibold text-slate-900">
+                          {formatNumber(report.summary.units_sold)}
+                        </p>
+                      </div>
+                    )}
 
                     <div className="rounded-xl bg-slate-50 p-4">
                       <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
@@ -418,70 +517,79 @@ export default function DashboardPage() {
                     </div>
                   </div>
 
-                  <div className="grid gap-4 lg:grid-cols-2">
-                    <div className="rounded-xl border p-4">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="font-medium text-slate-900">
-                            Profitability
-                          </p>
-                          <p className="mt-1 text-xs text-slate-500">
-                            Today's net trading result
-                          </p>
+                  <div
+                    className={`grid gap-4 ${
+                      canViewFinance ? "lg:grid-cols-2" : ""
+                    }`}
+                  >
+                    {canViewFinance ? (
+                      <div className="rounded-xl border p-4">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="font-medium text-slate-900">
+                              Profitability
+                            </p>
+                            <p className="mt-1 text-xs text-slate-500">
+                              Today's net trading result
+                            </p>
+                          </div>
+
+                          <span
+                            className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                              Number(report.summary.gross_margin ?? 0) > 0
+                                ? "bg-emerald-50 text-emerald-700"
+                                : "bg-slate-100 text-slate-600"
+                            }`}
+                          >
+                            {formatPercent(report.summary.gross_margin)}
+                          </span>
                         </div>
 
-                        <span
-                          className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                            report.summary.gross_margin > 0
-                              ? "bg-emerald-50 text-emerald-700"
-                              : "bg-slate-100 text-slate-600"
-                          }`}
-                        >
-                          {formatPercent(report.summary.gross_margin)}
-                        </span>
+                        <div className="mt-5 space-y-3">
+                          <div className="flex items-center justify-between text-sm">
+                            <span className="text-slate-500">Gross sales</span>
+                            <span className="font-medium text-slate-900">
+                              <Currency amount={report.summary.gross_sales} />
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between text-sm">
+                            <span className="text-slate-500">Refunds</span>
+                            <span className="font-medium text-red-600">
+                              -
+                              <Currency amount={report.summary.refunds} />
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between border-t pt-3 text-sm">
+                            <span className="font-medium text-slate-700">
+                              Net sales
+                            </span>
+                            <span className="font-semibold text-slate-900">
+                              <Currency amount={report.summary.net_sales} />
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between text-sm">
+                            <span className="text-slate-500">Net COGS</span>
+                            <span className="font-medium text-slate-900">
+                              <Currency amount={report.summary.net_cogs ?? 0} />
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between border-t pt-3">
+                            <span className="font-semibold text-slate-900">
+                              Gross profit
+                            </span>
+                            <span className="font-semibold text-slate-900">
+                              <Currency
+                                amount={report.summary.gross_profit ?? 0}
+                              />
+                            </span>
+                          </div>
+                        </div>
                       </div>
-
-                      <div className="mt-5 space-y-3">
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="text-slate-500">Gross sales</span>
-                          <span className="font-medium text-slate-900">
-                            <Currency amount={report.summary.gross_sales} />
-                          </span>
-                        </div>
-
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="text-slate-500">Refunds</span>
-                          <span className="font-medium text-red-600">
-                            -<Currency amount={report.summary.refunds} />
-                          </span>
-                        </div>
-
-                        <div className="flex items-center justify-between border-t pt-3 text-sm">
-                          <span className="font-medium text-slate-700">
-                            Net sales
-                          </span>
-                          <span className="font-semibold text-slate-900">
-                            <Currency amount={report.summary.net_sales} />
-                          </span>
-                        </div>
-
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="text-slate-500">Net COGS</span>
-                          <span className="font-medium text-slate-900">
-                            <Currency amount={report.summary.net_cogs} />
-                          </span>
-                        </div>
-
-                        <div className="flex items-center justify-between border-t pt-3">
-                          <span className="font-semibold text-slate-900">
-                            Gross profit
-                          </span>
-                          <span className="font-semibold text-slate-900">
-                            <Currency amount={report.summary.gross_profit} />
-                          </span>
-                        </div>
-                      </div>
-                    </div>
+                    ) : null}
 
                     <div className="rounded-xl border p-4">
                       <div>
@@ -519,12 +627,23 @@ export default function DashboardPage() {
                           </p>
                         </div>
 
-                        <div className="rounded-lg bg-slate-50 p-3">
-                          <p className="text-xs text-slate-500">VAT</p>
-                          <p className="mt-1 text-lg font-semibold text-slate-900">
-                            <Currency amount={report.summary.vat_amount} />
-                          </p>
-                        </div>
+                        {canViewFinance ? (
+                          <div className="rounded-lg bg-slate-50 p-3">
+                            <p className="text-xs text-slate-500">VAT</p>
+                            <p className="mt-1 text-lg font-semibold text-slate-900">
+                              <Currency
+                                amount={report.summary.vat_amount ?? 0}
+                              />
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="rounded-lg bg-slate-50 p-3">
+                            <p className="text-xs text-slate-500">Refunds</p>
+                            <p className="mt-1 text-lg font-semibold text-slate-900">
+                              <Currency amount={report.summary.refunds} />
+                            </p>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -532,90 +651,96 @@ export default function DashboardPage() {
               )}
             </SectionCard>
 
-            <SectionCard
-              title="Inventory Alerts"
-              description="Products that may require stock attention."
-              actions={
-                <Link
-                  href="/inventory"
-                  className="inline-flex items-center gap-1 text-sm font-medium text-slate-600 hover:text-slate-900"
-                >
-                  Inventory
-                  <ArrowRight className="h-4 w-4" />
-                </Link>
-              }
-            >
-              {inventoryAlerts.length === 0 ? (
-                <EmptyState
-                  icon={Package}
-                  title="Stock levels healthy"
-                  description="No products currently have 5 or fewer available units."
-                />
-              ) : (
-                <div className="divide-y">
-                  {inventoryAlerts.map((item) => (
-                    <div
-                      key={item.id}
-                      className="flex items-center justify-between gap-4 py-3 first:pt-0 last:pb-0"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-slate-900">
-                          {item.product?.name ?? "Unknown product"}
-                        </p>
+            {canViewInventory ? (
+              <SectionCard
+                title="Inventory Alerts"
+                description="Products that may require stock attention."
+                actions={
+                  <Link
+                    href="/inventory"
+                    className="inline-flex items-center gap-1 text-sm font-medium text-slate-600 hover:text-slate-900"
+                  >
+                    Inventory
+                    <ArrowRight className="h-4 w-4" />
+                  </Link>
+                }
+              >
+                {inventoryAlerts.length === 0 ? (
+                  <EmptyState
+                    icon={Package}
+                    title="Stock levels healthy"
+                    description="No products currently have 5 or fewer available units."
+                  />
+                ) : (
+                  <div className="divide-y">
+                    {inventoryAlerts.map((item) => (
+                      <div
+                        key={item.id}
+                        className="flex items-center justify-between gap-4 py-3 first:pt-0 last:pb-0"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-slate-900">
+                            {item.product?.name ?? "Unknown product"}
+                          </p>
 
-                        <p className="mt-0.5 truncate text-xs text-slate-400">
-                          {item.product?.sku ?? "No SKU"}
-                        </p>
+                          <p className="mt-0.5 truncate text-xs text-slate-400">
+                            {item.product?.sku ?? "No SKU"}
+                          </p>
+                        </div>
+
+                        <div className="shrink-0 text-right">
+                          <p
+                            className={`text-sm font-semibold ${
+                              item.quantity_available <= 0
+                                ? "text-red-600"
+                                : item.quantity_available <= 2
+                                  ? "text-amber-700"
+                                  : "text-slate-700"
+                            }`}
+                          >
+                            {formatNumber(item.quantity_available)} available
+                          </p>
+
+                          <p className="mt-0.5 text-xs text-slate-400">
+                            {formatNumber(item.quantity_on_hand)} on hand
+                          </p>
+                        </div>
                       </div>
+                    ))}
+                  </div>
+                )}
 
-                      <div className="shrink-0 text-right">
-                        <p
-                          className={`text-sm font-semibold ${
-                            item.quantity_available <= 0
-                              ? "text-red-600"
-                              : item.quantity_available <= 2
-                                ? "text-amber-700"
-                                : "text-slate-700"
-                          }`}
-                        >
-                          {formatNumber(item.quantity_available)} available
-                        </p>
-
-                        <p className="mt-0.5 text-xs text-slate-400">
-                          {formatNumber(item.quantity_on_hand)} on hand
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {inventoryAlerts.length > 0 ? (
-                <Link
-                  href="/inventory"
-                  className="mt-5 flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
-                >
-                  Review inventory
-                  <ArrowRight className="h-4 w-4" />
-                </Link>
-              ) : null}
-            </SectionCard>
+                {inventoryAlerts.length > 0 ? (
+                  <Link
+                    href="/inventory"
+                    className="mt-5 flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
+                  >
+                    Review inventory
+                    <ArrowRight className="h-4 w-4" />
+                  </Link>
+                ) : null}
+              </SectionCard>
+            ) : null}
           </div>
 
-          <div className="grid gap-4 xl:grid-cols-3">
+          <div
+            className={`grid gap-4 ${canViewFinance ? "xl:grid-cols-3" : ""}`}
+          >
             <SectionCard
               title="Top Products"
               description="Today's strongest products by net revenue."
               actions={
-                <Link
-                  href="/reports"
-                  className="inline-flex items-center gap-1 text-sm font-medium text-slate-600 hover:text-slate-900"
-                >
-                  Reports
-                  <ArrowRight className="h-4 w-4" />
-                </Link>
+                canViewReports ? (
+                  <Link
+                    href="/reports"
+                    className="inline-flex items-center gap-1 text-sm font-medium text-slate-600 hover:text-slate-900"
+                  >
+                    Reports
+                    <ArrowRight className="h-4 w-4" />
+                  </Link>
+                ) : undefined
               }
-              className="xl:col-span-2"
+              className={canViewFinance ? "xl:col-span-2" : ""}
             >
               {report.top_products.length === 0 ? (
                 <EmptyState
@@ -631,8 +756,17 @@ export default function DashboardPage() {
                         <th className="pb-3 font-medium">Product</th>
                         <th className="pb-3 text-right font-medium">Units</th>
                         <th className="pb-3 text-right font-medium">Sales</th>
-                        <th className="pb-3 text-right font-medium">Profit</th>
-                        <th className="pb-3 text-right font-medium">Margin</th>
+
+                        {canViewFinance ? (
+                          <>
+                            <th className="pb-3 text-right font-medium">
+                              Profit
+                            </th>
+                            <th className="pb-3 text-right font-medium">
+                              Margin
+                            </th>
+                          </>
+                        ) : null}
                       </tr>
                     </thead>
 
@@ -656,13 +790,17 @@ export default function DashboardPage() {
                             <Currency amount={product.revenue} />
                           </td>
 
-                          <td className="py-3 text-right font-medium text-slate-900">
-                            <Currency amount={product.gross_profit} />
-                          </td>
+                          {canViewFinance ? (
+                            <>
+                              <td className="py-3 text-right font-medium text-slate-900">
+                                <Currency amount={product.gross_profit ?? 0} />
+                              </td>
 
-                          <td className="py-3 text-right font-medium text-slate-700">
-                            {formatPercent(product.gross_margin)}
-                          </td>
+                              <td className="py-3 text-right font-medium text-slate-700">
+                                {formatPercent(product.gross_margin)}
+                              </td>
+                            </>
+                          ) : null}
                         </tr>
                       ))}
                     </tbody>
@@ -671,145 +809,169 @@ export default function DashboardPage() {
               )}
             </SectionCard>
 
-            <SectionCard
-              title="Business Position"
-              description="Current operational and liability position."
-            >
-              <div className="space-y-4">
-                <div className="rounded-xl bg-slate-50 p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                        Inventory
-                      </p>
-                      <p className="mt-2 text-xl font-semibold text-slate-900">
-                        <Currency
-                          amount={report.business_position.inventory_value}
-                        />
-                      </p>
-                      <p className="mt-1 text-xs text-slate-500">
-                        {formatNumber(
-                          report.business_position.inventory_quantity
-                        )}{" "}
-                        units on hand
-                      </p>
-                    </div>
+            {canViewFinance ? (
+              <SectionCard
+                title="Business Position"
+                description="Current operational and liability position."
+              >
+                <div className="space-y-4">
+                  <div className="rounded-xl bg-slate-50 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                          Inventory
+                        </p>
+                        <p className="mt-2 text-xl font-semibold text-slate-900">
+                          <Currency
+                            amount={
+                              report.business_position.inventory_value ?? 0
+                            }
+                          />
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {formatNumber(
+                            report.business_position.inventory_quantity
+                          )}{" "}
+                          units on hand
+                        </p>
+                      </div>
 
-                    <Boxes className="h-5 w-5 text-slate-400" />
+                      <Boxes className="h-5 w-5 text-slate-400" />
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl bg-slate-50 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                          Supplier Payables
+                        </p>
+                        <p className="mt-2 text-xl font-semibold text-slate-900">
+                          <Currency
+                            amount={
+                              report.business_position.supplier_outstanding ?? 0
+                            }
+                          />
+                        </p>
+                        <p
+                          className={`mt-1 text-xs ${
+                            Number(
+                              report.business_position.supplier_overdue ?? 0
+                            ) > 0
+                              ? "font-medium text-red-600"
+                              : "text-slate-500"
+                          }`}
+                        >
+                          <Currency
+                            amount={
+                              report.business_position.supplier_overdue ?? 0
+                            }
+                          />{" "}
+                          overdue
+                        </p>
+                      </div>
+
+                      <WalletCards className="h-5 w-5 text-slate-400" />
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl bg-slate-50 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                          Current Branch
+                        </p>
+                        <p className="mt-2 font-semibold text-slate-900">
+                          {branch?.name ?? "Organisation-wide"}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          Dashboard reporting scope
+                        </p>
+                      </div>
+
+                      <Building2 className="h-5 w-5 text-slate-400" />
+                    </div>
                   </div>
                 </div>
-
-                <div className="rounded-xl bg-slate-50 p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                        Supplier Payables
-                      </p>
-                      <p className="mt-2 text-xl font-semibold text-slate-900">
-                        <Currency
-                          amount={report.business_position.supplier_outstanding}
-                        />
-                      </p>
-                      <p
-                        className={`mt-1 text-xs ${
-                          report.business_position.supplier_overdue > 0
-                            ? "font-medium text-red-600"
-                            : "text-slate-500"
-                        }`}
-                      >
-                        <Currency
-                          amount={report.business_position.supplier_overdue}
-                        />{" "}
-                        overdue
-                      </p>
-                    </div>
-
-                    <WalletCards className="h-5 w-5 text-slate-400" />
-                  </div>
-                </div>
-
-                <div className="rounded-xl bg-slate-50 p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                        Current Branch
-                      </p>
-                      <p className="mt-2 font-semibold text-slate-900">
-                        {branch?.name ?? "All branches"}
-                      </p>
-                      <p className="mt-1 text-xs text-slate-500">
-                        Dashboard reporting scope
-                      </p>
-                    </div>
-
-                    <Building2 className="h-5 w-5 text-slate-400" />
-                  </div>
-                </div>
-              </div>
-            </SectionCard>
-          </div>
-
-          <div className="grid gap-4 md:grid-cols-3">
-            <Link
-              href="/sales"
-              className="group rounded-xl border bg-white p-5 shadow-sm transition hover:border-slate-300 hover:shadow"
-            >
-              <ReceiptText className="h-5 w-5 text-slate-600" />
-
-              <div className="mt-4 flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="font-semibold text-slate-900">
-                    Sales History
-                  </h2>
-                  <p className="mt-1 text-sm text-slate-500">
-                    Review transactions and receipts.
-                  </p>
-                </div>
-
-                <ArrowRight className="h-4 w-4 text-slate-400 transition group-hover:translate-x-0.5" />
-              </div>
-            </Link>
-
-            <Link
-              href="/inventory"
-              className="group rounded-xl border bg-white p-5 shadow-sm transition hover:border-slate-300 hover:shadow"
-            >
-              <Package className="h-5 w-5 text-slate-600" />
-
-              <div className="mt-4 flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="font-semibold text-slate-900">Inventory</h2>
-                  <p className="mt-1 text-sm text-slate-500">
-                    Review stock levels and valuation.
-                  </p>
-                </div>
-
-                <ArrowRight className="h-4 w-4 text-slate-400 transition group-hover:translate-x-0.5" />
-              </div>
-            </Link>
-
-            <Link
-              href="/reports"
-              className="group rounded-xl border bg-white p-5 shadow-sm transition hover:border-slate-300 hover:shadow"
-            >
-              <TrendingUp className="h-5 w-5 text-slate-600" />
-
-              <div className="mt-4 flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="font-semibold text-slate-900">
-                    Business Reports
-                  </h2>
-                  <p className="mt-1 text-sm text-slate-500">
-                    Analyse sales, profit and branches.
-                  </p>
-                </div>
-
-                <ArrowRight className="h-4 w-4 text-slate-400 transition group-hover:translate-x-0.5" />
-              </div>
-            </Link>
+              </SectionCard>
+            ) : null}
           </div>
         </>
       ) : null}
+
+      {!canViewReports && !loading ? (
+        <SectionCard>
+          <EmptyState
+            icon={TrendingUp}
+            title="Business reporting is not available for your role"
+            description="Your dashboard will show the operational areas you are authorised to use."
+          />
+        </SectionCard>
+      ) : null}
+
+      <div className="grid gap-4 md:grid-cols-3">
+        {canViewSales ? (
+          <Link
+            href="/sales"
+            className="group rounded-xl border bg-white p-5 shadow-sm transition hover:border-slate-300 hover:shadow"
+          >
+            <ReceiptText className="h-5 w-5 text-slate-600" />
+
+            <div className="mt-4 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="font-semibold text-slate-900">Sales History</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Review transactions and receipts.
+                </p>
+              </div>
+
+              <ArrowRight className="h-4 w-4 text-slate-400 transition group-hover:translate-x-0.5" />
+            </div>
+          </Link>
+        ) : null}
+
+        {canViewInventory ? (
+          <Link
+            href="/inventory"
+            className="group rounded-xl border bg-white p-5 shadow-sm transition hover:border-slate-300 hover:shadow"
+          >
+            <Package className="h-5 w-5 text-slate-600" />
+
+            <div className="mt-4 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="font-semibold text-slate-900">Inventory</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Review stock levels and availability.
+                </p>
+              </div>
+
+              <ArrowRight className="h-4 w-4 text-slate-400 transition group-hover:translate-x-0.5" />
+            </div>
+          </Link>
+        ) : null}
+
+        {canViewReports ? (
+          <Link
+            href="/reports"
+            className="group rounded-xl border bg-white p-5 shadow-sm transition hover:border-slate-300 hover:shadow"
+          >
+            <TrendingUp className="h-5 w-5 text-slate-600" />
+
+            <div className="mt-4 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="font-semibold text-slate-900">
+                  Business Reports
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Analyse authorised business performance.
+                </p>
+              </div>
+
+              <ArrowRight className="h-4 w-4 text-slate-400 transition group-hover:translate-x-0.5" />
+            </div>
+          </Link>
+        ) : null}
+      </div>
     </div>
   );
 }

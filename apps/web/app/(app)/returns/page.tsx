@@ -4,6 +4,7 @@ import { Eye, ReceiptText, RotateCcw, Search } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+import { useAuth } from "@/components/auth-provider";
 import { ReturnReceiptDialog } from "@/components/returns/return-receipt-dialog";
 import {
   Currency,
@@ -18,7 +19,10 @@ import {
 } from "@/lib/services/returns-history";
 
 export default function ReturnsHistoryPage() {
+  const { organization, branch, switchingContext, accessLoading } = useAuth();
+
   const [returns, setReturns] = useState<ReturnHistoryRow[]>([]);
+
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
@@ -29,13 +33,29 @@ export default function ReturnsHistoryPage() {
 
   useEffect(() => {
     async function loadReturns() {
+      if (!organization || !branch || switchingContext || accessLoading) {
+        setReturns([]);
+        setErrorMessage("");
+
+        setLoading(Boolean(switchingContext || accessLoading));
+
+        return;
+      }
+
       setLoading(true);
       setErrorMessage("");
+      setReturns([]);
 
       try {
-        const data = await getReturnsHistory();
+        const data = await getReturnsHistory({
+          organizationId: organization.id,
+          branchId: branch.id,
+        });
+
         setReturns(data);
       } catch (error: unknown) {
+        setReturns([]);
+
         setErrorMessage(
           error instanceof Error
             ? error.message
@@ -47,7 +67,7 @@ export default function ReturnsHistoryPage() {
     }
 
     void loadReturns();
-  }, []);
+  }, [organization, branch, switchingContext, accessLoading]);
 
   const filteredReturns = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
@@ -98,7 +118,8 @@ export default function ReturnsHistoryPage() {
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                className="w-full bg-transparent text-sm outline-none"
+                disabled={switchingContext || accessLoading}
+                className="w-full bg-transparent text-sm outline-none disabled:cursor-not-allowed disabled:opacity-50"
                 placeholder="Search by return number, receipt, customer, refund method or staff..."
               />
             </div>
@@ -114,6 +135,12 @@ export default function ReturnsHistoryPage() {
             <div className="flex min-h-72 items-center justify-center p-8 text-sm text-slate-500">
               Loading returns history...
             </div>
+          ) : !branch ? (
+            <EmptyState
+              icon={RotateCcw}
+              title="No active branch"
+              description="Select a branch to view returns history."
+            />
           ) : filteredReturns.length === 0 ? (
             <EmptyState
               icon={RotateCcw}
@@ -132,12 +159,19 @@ export default function ReturnsHistoryPage() {
                 <thead className="border-b bg-slate-50 text-slate-500">
                   <tr className="text-left">
                     <th className="px-5 py-4">Return</th>
+
                     <th className="px-5 py-4">Original Sale</th>
+
                     <th className="px-5 py-4">Customer</th>
+
                     <th className="px-5 py-4">Refund Method</th>
+
                     <th className="px-5 py-4">Refund Amount</th>
+
                     <th className="px-5 py-4">Processed By</th>
+
                     <th className="px-5 py-4">Status</th>
+
                     <th className="px-5 py-4 text-right">Actions</th>
                   </tr>
                 </thead>

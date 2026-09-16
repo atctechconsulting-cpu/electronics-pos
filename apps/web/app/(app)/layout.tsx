@@ -1,13 +1,16 @@
 "use client";
 
-import { ReactNode, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { AppSidebar } from "@/components/app-sidebar";
+import { ReactNode, useEffect } from "react";
+
 import { AppHeader } from "@/components/app-header";
+import { AppSidebar } from "@/components/app-sidebar";
 import { AuthProvider, useAuth } from "@/components/auth-provider";
+import { PermissionRouteGuard } from "@/components/permission-route-guard";
 
 function ProtectedAppLayout({ children }: { children: ReactNode }) {
   const router = useRouter();
+
   const { user, loading } = useAuth();
 
   useEffect(() => {
@@ -35,7 +38,9 @@ function ProtectedAppLayout({ children }: { children: ReactNode }) {
       <div className="flex min-h-screen flex-1 flex-col">
         <AppHeader />
 
-        <main className="flex-1 p-6">{children}</main>
+        <main className="flex-1 p-6">
+          <PermissionRouteGuard>{children}</PermissionRouteGuard>
+        </main>
       </div>
     </div>
   );

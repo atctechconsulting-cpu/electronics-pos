@@ -1,5 +1,6 @@
 "use client";
 
+import { useAuth } from "@/components/auth-provider";
 import {
   ArrowLeft,
   Building2,
@@ -30,6 +31,8 @@ export default function ReturnDetailsPage() {
   const params = useParams<{ returnId: string }>();
   const returnId = params.returnId;
 
+  const { organization, branch, switchingContext, accessLoading } = useAuth();
+
   const [returnRecord, setReturnRecord] = useState<ReturnReceiptData | null>(
     null
   );
@@ -40,15 +43,31 @@ export default function ReturnDetailsPage() {
 
   useEffect(() => {
     async function loadReturn() {
-      if (!returnId) {
+      if (
+        !returnId ||
+        !organization ||
+        !branch ||
+        switchingContext ||
+        accessLoading
+      ) {
+        setReturnRecord(null);
+        setErrorMessage("");
+
+        setLoading(Boolean(switchingContext || accessLoading));
+
         return;
       }
 
       setLoading(true);
       setErrorMessage("");
+      setReturnRecord(null);
 
       try {
-        const data = await getReturnReceipt(returnId);
+        const data = await getReturnReceipt(returnId, {
+          organizationId: organization.id,
+          branchId: branch.id,
+        });
+
         setReturnRecord(data);
       } catch (error: unknown) {
         setErrorMessage(
@@ -60,7 +79,7 @@ export default function ReturnDetailsPage() {
     }
 
     void loadReturn();
-  }, [returnId]);
+  }, [returnId, organization, branch, switchingContext, accessLoading]);
 
   if (loading) {
     return (

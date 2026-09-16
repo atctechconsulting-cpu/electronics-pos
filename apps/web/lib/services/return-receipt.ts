@@ -48,8 +48,14 @@ export type ReturnReceiptData = {
   items: ReturnReceiptItem[];
 };
 
+export type ReturnReceiptWorkspaceScope = {
+  organizationId: string;
+  branchId: string;
+};
+
 export async function getReturnReceipt(
-  returnId: string
+  returnId: string,
+  scope: ReturnReceiptWorkspaceScope
 ): Promise<ReturnReceiptData> {
   const { data: returnRecord, error: returnError } = await supabase
     .from("returns")
@@ -97,6 +103,8 @@ export async function getReturnReceipt(
     `
     )
     .eq("id", returnId)
+    .eq("organization_id", scope.organizationId)
+    .eq("branch_id", scope.branchId)
     .single();
 
   if (returnError) {
@@ -127,6 +135,8 @@ export async function getReturnReceipt(
     `
     )
     .eq("return_id", returnId)
+    .eq("organization_id", scope.organizationId)
+    .eq("branch_id", scope.branchId)
     .order("created_at", { ascending: true });
 
   if (itemsError) {

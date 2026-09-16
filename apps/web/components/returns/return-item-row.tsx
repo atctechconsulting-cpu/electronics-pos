@@ -1,6 +1,6 @@
 "use client";
 
-import { Minus, Plus, RotateCcw } from "lucide-react";
+import { CheckCircle2, Minus, Plus, RotateCcw } from "lucide-react";
 
 import { Currency, StatusBadge } from "@/components/ui/alpha-components";
 import type { SaleDetailItem } from "@/lib/services/sale-details";
@@ -26,12 +26,18 @@ export function ReturnItemRow({
   disabled = false,
   onChange,
 }: ReturnItemRowProps) {
-  const selected = selection !== null;
+  const fullyReturned = item.remaining_returnable <= 0;
+
+  const interactionDisabled = disabled || fullyReturned;
+
+  const selected = selection !== null && !fullyReturned;
+
   const quantity = selection?.quantity ?? 0;
   const restock = selection?.restock ?? true;
+
   const selectedSerialIds = selection?.serial_ids ?? [];
 
-  const hasSerials = item.serials.length > 0;
+  const hasEligibleSerials = item.serials.length > 0;
 
   function createSelection(
     overrides: Partial<ReturnItemSelection> = {}
@@ -47,7 +53,7 @@ export function ReturnItemRow({
   }
 
   function handleToggleSelected() {
-    if (disabled) {
+    if (interactionDisabled) {
       return;
     }
 
@@ -60,15 +66,18 @@ export function ReturnItemRow({
   }
 
   function updateQuantity(nextQuantity: number) {
-    if (!selection || disabled) {
+    if (!selection || interactionDisabled) {
       return;
     }
 
-    const safeQuantity = Math.max(1, Math.min(nextQuantity, item.quantity));
+    const safeQuantity = Math.max(
+      1,
+      Math.min(nextQuantity, item.remaining_returnable)
+    );
 
     let nextSerialIds = selection.serial_ids;
 
-    if (hasSerials && nextSerialIds.length > safeQuantity) {
+    if (hasEligibleSerials && nextSerialIds.length > safeQuantity) {
       nextSerialIds = nextSerialIds.slice(0, safeQuantity);
     }
 
@@ -80,7 +89,7 @@ export function ReturnItemRow({
   }
 
   function handleRestockChange(event: React.ChangeEvent<HTMLInputElement>) {
-    if (!selection || disabled) {
+    if (!selection || interactionDisabled) {
       return;
     }
 
@@ -91,7 +100,7 @@ export function ReturnItemRow({
   }
 
   function toggleSerial(serialId: string) {
-    if (!selection || disabled) {
+    if (!selection || interactionDisabled) {
       return;
     }
 
@@ -119,7 +128,11 @@ export function ReturnItemRow({
   return (
     <div
       className={`rounded-xl border transition ${
-        selected ? "border-slate-900 bg-slate-50" : "border-slate-200 bg-white"
+        fullyReturned
+          ? "border-slate-200 bg-slate-50"
+          : selected
+            ? "border-slate-900 bg-slate-50"
+            : "border-slate-200 bg-white"
       }`}
     >
       <div className="flex items-start gap-4 p-4">
@@ -127,23 +140,55 @@ export function ReturnItemRow({
           type="checkbox"
           checked={selected}
           onChange={handleToggleSelected}
-          disabled={disabled}
-          className="mt-1 h-4 w-4 rounded border-slate-300"
+          disabled={interactionDisabled}
+          className="mt-1 h-4 w-4 rounded border-slate-300 disabled:cursor-not-allowed"
           aria-label={`Select ${item.product_name} for return`}
         />
 
         <div className="min-w-0 flex-1">
           <div className="flex flex-col justify-between gap-3 sm:flex-row">
             <div>
-              <h3 className="font-semibold text-slate-900">
-                {item.product_name}
-              </h3>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="font-semibold text-slate-900">
+                  {item.product_name}
+                </h3>
+
+                {fullyReturned && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2.5 py-1 text-xs font-medium text-green-700">
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    Fully Returned
+                  </span>
+                )}
+              </div>
 
               <p className="mt-1 text-sm text-slate-500">SKU: {item.sku}</p>
 
-              <p className="mt-2 text-sm text-slate-600">
-                Sold quantity: {item.quantity}
-              </p>
+              <div className="mt-3 grid gap-1 text-sm sm:grid-cols-3 sm:gap-5">
+                <div>
+                  <span className="text-slate-500">Sold:</span>{" "}
+                  <span className="font-medium text-slate-900">
+                    {item.quantity}
+                  </span>
+                </div>
+
+                <div>
+                  <span className="text-slate-500">Returned:</span>{" "}
+                  <span className="font-medium text-slate-900">
+                    {item.already_returned}
+                  </span>
+                </div>
+
+                <div>
+                  <span className="text-slate-500">Available:</span>{" "}
+                  <span
+                    className={`font-semibold ${
+                      fullyReturned ? "text-green-700" : "text-slate-900"
+                    }`}
+                  >
+                    {item.remaining_returnable}
+                  </span>
+                </div>
+              </div>
             </div>
 
             <div className="sm:text-right">
@@ -156,6 +201,13 @@ export function ReturnItemRow({
             </div>
           </div>
 
+          {fullyReturned && (
+            <div className="mt-4 rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-700">
+              All units from this sale line have already been returned. No
+              further return can be processed for this product.
+            </div>
+          )}
+
           {selected && selection && (
             <div className="mt-5 space-y-5 border-t pt-5">
               <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
@@ -165,7 +217,7 @@ export function ReturnItemRow({
                   </p>
 
                   <p className="mt-1 text-xs text-slate-500">
-                    Maximum {item.quantity}
+                    Maximum {item.remaining_returnable} remaining
                   </p>
                 </div>
 
@@ -173,7 +225,7 @@ export function ReturnItemRow({
                   <button
                     type="button"
                     onClick={() => updateQuantity(quantity - 1)}
-                    disabled={disabled || quantity <= 1}
+                    disabled={interactionDisabled || quantity <= 1}
                     className="rounded-lg border p-2 text-slate-700 hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
                     aria-label="Decrease return quantity"
                   >
@@ -187,7 +239,10 @@ export function ReturnItemRow({
                   <button
                     type="button"
                     onClick={() => updateQuantity(quantity + 1)}
-                    disabled={disabled || quantity >= item.quantity}
+                    disabled={
+                      interactionDisabled ||
+                      quantity >= item.remaining_returnable
+                    }
                     className="rounded-lg border p-2 text-slate-700 hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
                     aria-label="Increase return quantity"
                   >
@@ -201,7 +256,7 @@ export function ReturnItemRow({
                   type="checkbox"
                   checked={restock}
                   onChange={handleRestockChange}
-                  disabled={disabled}
+                  disabled={interactionDisabled}
                   className="mt-1 h-4 w-4 rounded border-slate-300"
                 />
 
@@ -218,7 +273,7 @@ export function ReturnItemRow({
                 </div>
               </label>
 
-              {hasSerials && (
+              {hasEligibleSerials && (
                 <div>
                   <div className="flex items-center justify-between gap-3">
                     <div>
@@ -227,6 +282,7 @@ export function ReturnItemRow({
                       </p>
 
                       <p className="mt-1 text-xs text-slate-500">
+                        Only identifiers still eligible for return are shown.
                         Select exactly {quantity} identifier
                         {quantity === 1 ? "" : "s"}.
                       </p>
@@ -256,7 +312,7 @@ export function ReturnItemRow({
                           type="button"
                           onClick={() => toggleSerial(serial.id)}
                           disabled={
-                            disabled ||
+                            interactionDisabled ||
                             (!serialSelected &&
                               selectedSerialIds.length >= quantity)
                           }

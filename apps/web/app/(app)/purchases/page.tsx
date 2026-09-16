@@ -4,6 +4,7 @@ import { Eye, PackagePlus, Search, ShoppingCart } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+import { useAuth } from "@/components/auth-provider";
 import {
   Currency,
   EmptyState,
@@ -17,33 +18,68 @@ import {
 } from "@/lib/services/purchase-orders";
 
 export default function PurchaseOrdersPage() {
-  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderRow[]>([]);
+  const { organization, branch, switchingContext, accessLoading } = useAuth();
 
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderRow[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
 
   useEffect(() => {
+    let cancelled = false;
+
     async function loadPurchaseOrders() {
-      setLoading(true);
-      setErrorMessage("");
+      if (switchingContext || accessLoading) {
+        return;
+      }
+
+      if (!organization?.id || !branch?.id) {
+        setPurchaseOrders([]);
+        setErrorMessage("");
+        setLoading(false);
+        return;
+      }
 
       try {
-        const data = await getPurchaseOrders();
-        setPurchaseOrders(data);
+        setLoading(true);
+        setErrorMessage("");
+
+        // Clear the previous workspace immediately so purchase orders
+        // from another organisation/branch cannot remain on screen
+        // while the new workspace is loading.
+        setPurchaseOrders([]);
+
+        const data = await getPurchaseOrders({
+          organizationId: organization.id,
+          branchId: branch.id,
+        });
+
+        if (!cancelled) {
+          setPurchaseOrders(data);
+        }
       } catch (error: unknown) {
-        setErrorMessage(
-          error instanceof Error
-            ? error.message
-            : "Unable to load purchase orders."
-        );
+        if (!cancelled) {
+          setPurchaseOrders([]);
+
+          setErrorMessage(
+            error instanceof Error
+              ? error.message
+              : "Unable to load purchase orders."
+          );
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     }
 
     void loadPurchaseOrders();
-  }, []);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [organization?.id, branch?.id, switchingContext, accessLoading]);
 
   const filteredPurchaseOrders = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
@@ -67,21 +103,31 @@ export default function PurchaseOrdersPage() {
     });
   }, [purchaseOrders, search]);
 
+  const isLoading = loading || switchingContext || accessLoading;
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Purchase Orders"
         description="Create and manage stock orders from your suppliers."
         actions={
-          <Link
-            href="/purchases/new"
-            className="inline-flex items-center rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-slate-800"
-          >
-            <PackagePlus className="mr-2 h-4 w-4" />
-            New Purchase Order
-          </Link>
+          organization?.id && branch?.id ? (
+            <Link
+              href="/purchases/new"
+              className="inline-flex items-center rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-slate-800"
+            >
+              <PackagePlus className="mr-2 h-4 w-4" />
+              New Purchase Order
+            </Link>
+          ) : undefined
         }
       />
+
+      {!isLoading && (!organization?.id || !branch?.id) && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+          Select an organisation and branch before viewing purchase orders.
+        </div>
+      )}
 
       <SectionCard>
         <div className="border-b p-4">
@@ -103,10 +149,16 @@ export default function PurchaseOrdersPage() {
           </div>
         )}
 
-        {loading ? (
+        {isLoading ? (
           <div className="flex min-h-72 items-center justify-center p-8 text-sm text-slate-500">
             Loading purchase orders...
           </div>
+        ) : !organization?.id || !branch?.id ? (
+          <EmptyState
+            icon={ShoppingCart}
+            title="No workspace selected"
+            description="Select an organisation and branch to view purchase orders."
+          />
         ) : filteredPurchaseOrders.length === 0 ? (
           <EmptyState
             icon={ShoppingCart}

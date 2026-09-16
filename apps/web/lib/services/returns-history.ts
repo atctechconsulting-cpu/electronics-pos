@@ -9,13 +9,23 @@ export type ReturnHistoryRow = {
   created_at: string;
 
   original_receipt: string;
-
   customer_name: string;
-
   processed_by: string;
 };
 
-export async function getReturnsHistory(): Promise<ReturnHistoryRow[]> {
+export type ReturnsWorkspaceScope = {
+  organizationId: string;
+  branchId: string;
+};
+
+export async function getReturnsHistory({
+  organizationId,
+  branchId,
+}: ReturnsWorkspaceScope): Promise<ReturnHistoryRow[]> {
+  if (!organizationId || !branchId) {
+    return [];
+  }
+
   const { data, error } = await supabase
     .from("returns")
     .select(
@@ -42,12 +52,14 @@ export async function getReturnsHistory(): Promise<ReturnHistoryRow[]> {
       )
     `
     )
+    .eq("organization_id", organizationId)
+    .eq("branch_id", branchId)
     .order("created_at", {
       ascending: false,
     });
 
   if (error) {
-    console.error(error);
+    console.error("Failed to load returns history:", error);
 
     throw new Error(error.message || "Unable to load returns history.");
   }
@@ -73,21 +85,13 @@ export async function getReturnsHistory(): Promise<ReturnHistoryRow[]> {
 
     return {
       id: row.id,
-
       return_number: row.return_number,
-
       refund_amount: Number(row.refund_amount),
-
       refund_method: row.refund_method,
-
       status: row.status,
-
       created_at: row.created_at,
-
       original_receipt: sale?.receipt_number ?? "-",
-
       customer_name: customerName,
-
       processed_by: profile?.full_name ?? "Unknown",
     };
   });

@@ -5,28 +5,28 @@ export type BusinessReportSummary = {
   refunds: number;
   net_sales: number;
 
-  gross_cogs: number;
-  returned_cogs: number;
-  net_cogs: number;
+  gross_cogs: number | null;
+  returned_cogs: number | null;
+  net_cogs: number | null;
 
-  gross_profit: number;
-  gross_margin: number;
+  gross_profit: number | null;
+  gross_margin: number | null;
 
   transaction_count: number;
   units_sold: number;
 
   discount_amount: number;
-  vat_amount: number;
+  vat_amount: number | null;
 
   average_order_value: number;
 };
 
 export type BusinessPosition = {
   inventory_quantity: number;
-  inventory_value: number;
+  inventory_value: number | null;
 
-  supplier_outstanding: number;
-  supplier_overdue: number;
+  supplier_outstanding: number | null;
+  supplier_overdue: number | null;
 };
 
 export type SalesTrendPoint = {
@@ -36,8 +36,8 @@ export type SalesTrendPoint = {
   refunds: number;
   net_sales: number;
 
-  cogs: number;
-  gross_profit: number;
+  cogs?: number;
+  gross_profit?: number;
 
   transactions: number;
 };
@@ -50,10 +50,10 @@ export type TopProductReport = {
   units_sold: number;
 
   revenue: number;
-  cogs: number;
 
-  gross_profit: number;
-  gross_margin: number;
+  cogs?: number;
+  gross_profit?: number;
+  gross_margin?: number;
 };
 
 export type BranchPerformanceReport = {
@@ -61,19 +61,23 @@ export type BranchPerformanceReport = {
   branch_name: string;
 
   transactions: number;
-
   net_sales: number;
-  cogs: number;
 
-  gross_profit: number;
-  gross_margin: number;
+  cogs?: number;
+  gross_profit?: number;
+  gross_margin?: number;
 };
 
 export type BusinessReport = {
   period: {
     start_date: string;
     end_date: string;
+    organization_id: string;
     branch_id: string | null;
+  };
+
+  access: {
+    can_view_finance: boolean;
   };
 
   summary: BusinessReportSummary;
@@ -88,6 +92,7 @@ export type BusinessReport = {
 };
 
 export type GetBusinessReportInput = {
+  organizationId: string;
   startDate: string;
   endDate: string;
   branchId?: string | null;
@@ -96,7 +101,12 @@ export type GetBusinessReportInput = {
 export async function getBusinessReport(
   input: GetBusinessReportInput
 ): Promise<BusinessReport> {
+  if (!input.organizationId) {
+    throw new Error("Organization is required for reporting.");
+  }
+
   const { data, error } = await supabase.rpc("get_business_report", {
+    p_organization_id: input.organizationId,
     p_start_date: input.startDate,
     p_end_date: input.endDate,
     p_branch_id: input.branchId ?? null,

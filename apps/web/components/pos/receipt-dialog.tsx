@@ -1,5 +1,6 @@
 "use client";
 
+import { useAuth } from "@/components/auth-provider";
 import { getReceipt, type ReceiptData } from "@/lib/services/receipt";
 import { Printer, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -11,6 +12,7 @@ type ReceiptDialogProps = {
 };
 
 export function ReceiptDialog({ open, saleId, onClose }: ReceiptDialogProps) {
+  const { organization, branch, switchingContext, accessLoading } = useAuth();
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -18,14 +20,32 @@ export function ReceiptDialog({ open, saleId, onClose }: ReceiptDialogProps) {
 
   useEffect(() => {
     async function loadReceipt() {
-      if (!open || !saleId) return;
+      if (
+        !open ||
+        !saleId ||
+        !organization ||
+        !branch ||
+        switchingContext ||
+        accessLoading
+      ) {
+        setReceipt(null);
+        setErrorMessage("");
+
+        setLoading(Boolean(open && (switchingContext || accessLoading)));
+
+        return;
+      }
 
       setLoading(true);
       setErrorMessage("");
       setReceipt(null);
 
       try {
-        const data = await getReceipt(saleId);
+        const data = await getReceipt(saleId, {
+          organizationId: organization.id,
+          branchId: branch.id,
+        });
+
         setReceipt(data);
       } catch (error: unknown) {
         setErrorMessage(
@@ -37,7 +57,7 @@ export function ReceiptDialog({ open, saleId, onClose }: ReceiptDialogProps) {
     }
 
     void loadReceipt();
-  }, [open, saleId]);
+  }, [open, saleId, organization, branch, switchingContext, accessLoading]);
 
   function handlePrint() {
     if (!receiptRef.current || !receipt) return;

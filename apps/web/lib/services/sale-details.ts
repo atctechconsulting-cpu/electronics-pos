@@ -5,12 +5,17 @@ export type SaleDetailItem = {
   product_id: string;
   product_name: string;
   sku: string;
+
   quantity: number;
+  already_returned: number;
+  remaining_returnable: number;
+
   unit_price: number;
   unit_cost: number;
   discount_amount: number;
   vat_amount: number;
   line_total: number;
+
   serials: {
     id: string;
     serial_number: string | null;
@@ -68,7 +73,15 @@ export type SaleDetails = {
   payments: SaleDetailPayment[];
 };
 
-export async function getSaleDetails(saleId: string): Promise<SaleDetails> {
+export type SaleDetailsWorkspaceScope = {
+  organizationId: string;
+  branchId: string;
+};
+
+export async function getSaleDetails(
+  saleId: string,
+  scope: SaleDetailsWorkspaceScope
+): Promise<SaleDetails> {
   const { data: sale, error: saleError } = await supabase
     .from("sales")
     .select(
@@ -111,6 +124,8 @@ export async function getSaleDetails(saleId: string): Promise<SaleDetails> {
     `
     )
     .eq("id", saleId)
+    .eq("organization_id", scope.organizationId)
+    .eq("branch_id", scope.branchId)
     .single();
 
   if (saleError) {
@@ -123,25 +138,29 @@ export async function getSaleDetails(saleId: string): Promise<SaleDetails> {
     .from("sale_items")
     .select(
       `
-      id,
-      product_id,
-      quantity,
-      unit_price,
-      unit_cost,
-      discount_amount,
-      vat_amount,
-      line_total,
-      created_at,
-
-      products:product_id (
         id,
-        name,
-        sku
-      )
-    `
+        product_id,
+        quantity,
+        unit_price,
+        unit_cost,
+        discount_amount,
+        vat_amount,
+        line_total,
+        created_at,
+
+        products:product_id (
+          id,
+          name,
+          sku
+        )
+      `
     )
     .eq("sale_id", saleId)
-    .order("created_at", { ascending: true });
+    .eq("organization_id", scope.organizationId)
+    .eq("branch_id", scope.branchId)
+    .order("created_at", {
+      ascending: true,
+    });
 
   if (itemsError) {
     console.error("Failed to load sale items:", itemsError);
@@ -153,15 +172,19 @@ export async function getSaleDetails(saleId: string): Promise<SaleDetails> {
     .from("payments")
     .select(
       `
-      id,
-      payment_method,
-      amount,
-      reference,
-      created_at
-    `
+        id,
+        payment_method,
+        amount,
+        reference,
+        created_at
+      `
     )
     .eq("sale_id", saleId)
-    .order("created_at", { ascending: true });
+    .eq("organization_id", scope.organizationId)
+    .eq("branch_id", scope.branchId)
+    .order("created_at", {
+      ascending: true,
+    });
 
   if (paymentsError) {
     console.error("Failed to load sale payments:", paymentsError);
@@ -180,13 +203,64 @@ export async function getSaleDetails(saleId: string): Promise<SaleDetails> {
         status
       `
     )
-    .eq("sale_id", saleId);
+    .eq("sale_id", saleId)
+    .eq("organization_id", scope.organizationId)
+    .eq("branch_id", scope.branchId);
 
   if (serialsError) {
     console.error("Failed to load sold serials:", serialsError);
 
     throw new Error(
       serialsError.message || "Unable to load sale serial and IMEI records."
+    );
+  }
+
+  /*
+   * Return history is loaded separately so the application
+   * can calculate exactly how many units from each sale item
+   * remain eligible for return.
+   *
+   * Only COMPLETED returns count against the available
+   * quantity.
+   */
+  const { data: completedReturnItems, error: returnItemsError } = await supabase
+    .from("return_items")
+    .select(
+      `
+      sale_item_id,
+      quantity,
+
+      returns:return_id!inner (
+        status
+      )
+    `
+    )
+    .eq("sale_id", saleId)
+    .eq("organization_id", scope.organizationId)
+    .eq("branch_id", scope.branchId)
+    .eq("returns.status", "COMPLETED");
+
+  if (returnItemsError) {
+    console.error(
+      "Failed to load completed return quantities:",
+      returnItemsError
+    );
+
+    throw new Error(
+      returnItemsError.message ||
+        "Unable to determine previously returned quantities."
+    );
+  }
+
+  const returnedQuantityBySaleItem = new Map<string, number>();
+
+  for (const returnItem of completedReturnItems ?? []) {
+    const current =
+      returnedQuantityBySaleItem.get(returnItem.sale_item_id) ?? 0;
+
+    returnedQuantityBySaleItem.set(
+      returnItem.sale_item_id,
+      current + Number(returnItem.quantity)
     );
   }
 
@@ -211,26 +285,46 @@ export async function getSaleDetails(saleId: string): Promise<SaleDetails> {
       ? item.products[0]
       : item.products;
 
+    const quantity = Number(item.quantity);
+
+    const alreadyReturned = returnedQuantityBySaleItem.get(item.id) ?? 0;
+
+    const remainingReturnable = Math.max(quantity - alreadyReturned, 0);
+
+    /*
+     * Only SOLD identifiers are eligible for another
+     * return. Returned/restocked identifiers must never
+     * be offered again.
+     */
+    const eligibleSerials = (serialRecords ?? [])
+      .filter(
+        (serial) =>
+          serial.product_id === item.product_id && serial.status === "SOLD"
+      )
+      .map((serial) => ({
+        id: serial.id,
+        serial_number: serial.serial_number,
+        imei: serial.imei,
+        status: serial.status,
+      }));
+
     return {
       id: item.id,
       product_id: item.product_id,
       product_name: product?.name ?? "Unknown product",
       sku: product?.sku ?? "-",
-      quantity: Number(item.quantity),
+
+      quantity,
+      already_returned: alreadyReturned,
+      remaining_returnable: remainingReturnable,
+
       unit_price: Number(item.unit_price),
       unit_cost: Number(item.unit_cost),
       discount_amount: Number(item.discount_amount),
       vat_amount: Number(item.vat_amount),
       line_total: Number(item.line_total),
 
-      serials: (serialRecords ?? [])
-        .filter((serial) => serial.product_id === item.product_id)
-        .map((serial) => ({
-          id: serial.id,
-          serial_number: serial.serial_number,
-          imei: serial.imei,
-          status: serial.status,
-        })),
+      serials: eligibleSerials,
     };
   });
 

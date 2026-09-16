@@ -6,6 +6,11 @@ export type SupplierInvoiceStatus =
 export type SupplierPaymentMethod =
   "CASH" | "BANK_TRANSFER" | "CARD" | "CHEQUE" | "OTHER";
 
+export type WorkspaceScope = {
+  organizationId: string;
+  branchId: string;
+};
+
 export type CreateSupplierInvoiceInput = {
   supplierId: string;
   branchId: string;
@@ -127,6 +132,44 @@ function getProfileName(value: unknown) {
   return profile?.full_name?.trim() || "Unknown";
 }
 
+function mapSupplierInvoiceRow(row: any): SupplierInvoiceRow {
+  const supplier = getJoinedRecord<JoinedName>(row.suppliers);
+  const branch = getJoinedRecord<JoinedName>(row.branches);
+  const purchaseOrder = getJoinedRecord<JoinedPurchaseOrder>(
+    row.purchase_orders
+  );
+
+  return {
+    id: row.id,
+    organization_id: row.organization_id,
+    branch_id: row.branch_id,
+    supplier_id: row.supplier_id,
+    purchase_order_id: row.purchase_order_id,
+
+    invoice_number: row.invoice_number,
+    invoice_date: row.invoice_date,
+    due_date: row.due_date,
+
+    status: row.status as SupplierInvoiceStatus,
+
+    subtotal: Number(row.subtotal),
+    tax_amount: Number(row.tax_amount),
+    discount_amount: Number(row.discount_amount),
+    total_amount: Number(row.total_amount),
+    amount_paid: Number(row.amount_paid),
+    amount_due: Number(row.amount_due),
+
+    notes: row.notes,
+
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+
+    supplier_name: supplier?.name || "Unknown supplier",
+    branch_name: branch?.name || "Unknown branch",
+    po_number: purchaseOrder?.po_number || null,
+  };
+}
+
 export async function createSupplierInvoice(
   input: CreateSupplierInvoiceInput
 ): Promise<CreateSupplierInvoiceResult> {
@@ -180,7 +223,9 @@ export async function recordSupplierPayment(
   return data as RecordSupplierPaymentResult;
 }
 
-export async function getSupplierInvoices(): Promise<SupplierInvoiceRow[]> {
+export async function getSupplierInvoices(
+  scope: WorkspaceScope
+): Promise<SupplierInvoiceRow[]> {
   const { data, error } = await supabase
     .from("supplier_invoices")
     .select(
@@ -214,6 +259,8 @@ export async function getSupplierInvoices(): Promise<SupplierInvoiceRow[]> {
         )
       `
     )
+    .eq("organization_id", scope.organizationId)
+    .eq("branch_id", scope.branchId)
     .order("created_at", {
       ascending: false,
     });
@@ -222,47 +269,12 @@ export async function getSupplierInvoices(): Promise<SupplierInvoiceRow[]> {
     throw new Error(error.message);
   }
 
-  return (data ?? []).map((row) => {
-    const supplier = getJoinedRecord<JoinedName>(row.suppliers);
-    const branch = getJoinedRecord<JoinedName>(row.branches);
-    const purchaseOrder = getJoinedRecord<JoinedPurchaseOrder>(
-      row.purchase_orders
-    );
-
-    return {
-      id: row.id,
-      organization_id: row.organization_id,
-      branch_id: row.branch_id,
-      supplier_id: row.supplier_id,
-      purchase_order_id: row.purchase_order_id,
-
-      invoice_number: row.invoice_number,
-      invoice_date: row.invoice_date,
-      due_date: row.due_date,
-
-      status: row.status as SupplierInvoiceStatus,
-
-      subtotal: Number(row.subtotal),
-      tax_amount: Number(row.tax_amount),
-      discount_amount: Number(row.discount_amount),
-      total_amount: Number(row.total_amount),
-      amount_paid: Number(row.amount_paid),
-      amount_due: Number(row.amount_due),
-
-      notes: row.notes,
-
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-
-      supplier_name: supplier?.name || "Unknown supplier",
-      branch_name: branch?.name || "Unknown branch",
-      po_number: purchaseOrder?.po_number || null,
-    };
-  });
+  return (data ?? []).map(mapSupplierInvoiceRow);
 }
 
 export async function getSupplierInvoiceDetails(
-  supplierInvoiceId: string
+  supplierInvoiceId: string,
+  scope: WorkspaceScope
 ): Promise<SupplierInvoiceDetails> {
   const { data: invoice, error: invoiceError } = await supabase
     .from("supplier_invoices")
@@ -296,11 +308,13 @@ export async function getSupplierInvoiceDetails(
           po_number
         ),
         profiles!supplier_invoices_created_by_fkey (
-          full_name          
+          full_name
         )
       `
     )
     .eq("id", supplierInvoiceId)
+    .eq("organization_id", scope.organizationId)
+    .eq("branch_id", scope.branchId)
     .single();
 
   if (invoiceError) {
@@ -324,6 +338,8 @@ export async function getSupplierInvoiceDetails(
       `
     )
     .eq("supplier_invoice_id", supplierInvoiceId)
+    .eq("organization_id", scope.organizationId)
+    .eq("branch_id", scope.branchId)
     .order("payment_date", {
       ascending: false,
     })
@@ -386,7 +402,8 @@ export async function getSupplierInvoiceDetails(
 }
 
 export async function getSupplierInvoiceForPurchaseOrder(
-  purchaseOrderId: string
+  purchaseOrderId: string,
+  scope: WorkspaceScope
 ): Promise<SupplierInvoiceRow | null> {
   const { data, error } = await supabase
     .from("supplier_invoices")
@@ -422,6 +439,8 @@ export async function getSupplierInvoiceForPurchaseOrder(
       `
     )
     .eq("purchase_order_id", purchaseOrderId)
+    .eq("organization_id", scope.organizationId)
+    .eq("branch_id", scope.branchId)
     .neq("status", "CANCELLED")
     .maybeSingle();
 
@@ -433,39 +452,5 @@ export async function getSupplierInvoiceForPurchaseOrder(
     return null;
   }
 
-  const supplier = getJoinedRecord<JoinedName>(data.suppliers);
-  const branch = getJoinedRecord<JoinedName>(data.branches);
-  const purchaseOrder = getJoinedRecord<JoinedPurchaseOrder>(
-    data.purchase_orders
-  );
-
-  return {
-    id: data.id,
-    organization_id: data.organization_id,
-    branch_id: data.branch_id,
-    supplier_id: data.supplier_id,
-    purchase_order_id: data.purchase_order_id,
-
-    invoice_number: data.invoice_number,
-    invoice_date: data.invoice_date,
-    due_date: data.due_date,
-
-    status: data.status as SupplierInvoiceStatus,
-
-    subtotal: Number(data.subtotal),
-    tax_amount: Number(data.tax_amount),
-    discount_amount: Number(data.discount_amount),
-    total_amount: Number(data.total_amount),
-    amount_paid: Number(data.amount_paid),
-    amount_due: Number(data.amount_due),
-
-    notes: data.notes,
-
-    created_at: data.created_at,
-    updated_at: data.updated_at,
-
-    supplier_name: supplier?.name || "Unknown supplier",
-    branch_name: branch?.name || "Unknown branch",
-    po_number: purchaseOrder?.po_number || null,
-  };
+  return mapSupplierInvoiceRow(data);
 }

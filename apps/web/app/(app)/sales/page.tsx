@@ -12,7 +12,7 @@ import {
 } from "@/lib/services/sales-history";
 
 export default function SalesHistoryPage() {
-  const { organization, branch } = useAuth();
+  const { organization, branch, switchingContext, accessLoading } = useAuth();
 
   const [sales, setSales] = useState<SalesHistoryRecord[]>([]);
   const [search, setSearch] = useState("");
@@ -20,11 +20,15 @@ export default function SalesHistoryPage() {
   const [errorMessage, setErrorMessage] = useState("");
 
   const [selectedSaleId, setSelectedSaleId] = useState<string | null>(null);
+
   const [receiptOpen, setReceiptOpen] = useState(false);
 
   useEffect(() => {
     async function loadSales() {
-      if (!organization) {
+      if (!organization || !branch || switchingContext || accessLoading) {
+        setSales([]);
+        setErrorMessage("");
+        setLoading(Boolean(switchingContext || accessLoading));
         return;
       }
 
@@ -34,12 +38,14 @@ export default function SalesHistoryPage() {
       try {
         const data = await getSalesHistory({
           organizationId: organization.id,
-          branchId: branch?.id ?? null,
+          branchId: branch.id,
           search,
         });
 
         setSales(data);
       } catch (error: unknown) {
+        setSales([]);
+
         setErrorMessage(
           error instanceof Error
             ? error.message
@@ -57,7 +63,7 @@ export default function SalesHistoryPage() {
     return () => {
       window.clearTimeout(timer);
     };
-  }, [organization, branch, search]);
+  }, [organization, branch, search, switchingContext, accessLoading]);
 
   function openReceipt(saleId: string) {
     setSelectedSaleId(saleId);
@@ -108,7 +114,8 @@ export default function SalesHistoryPage() {
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                className="w-full bg-transparent text-sm outline-none"
+                disabled={switchingContext || accessLoading}
+                className="w-full bg-transparent text-sm outline-none disabled:cursor-not-allowed disabled:opacity-50"
                 placeholder="Search by receipt number..."
               />
             </div>
@@ -123,6 +130,18 @@ export default function SalesHistoryPage() {
           {loading ? (
             <div className="p-10 text-center text-sm text-slate-500">
               Loading sales history...
+            </div>
+          ) : !branch ? (
+            <div className="p-12 text-center">
+              <ReceiptText className="mx-auto h-12 w-12 text-slate-300" />
+
+              <h2 className="mt-4 text-lg font-semibold text-slate-900">
+                No active branch
+              </h2>
+
+              <p className="mt-2 text-sm text-slate-500">
+                Select a branch to view sales history.
+              </p>
             </div>
           ) : sales.length === 0 ? (
             <div className="p-12 text-center">
@@ -144,11 +163,17 @@ export default function SalesHistoryPage() {
                 <thead className="border-b bg-slate-50 text-slate-500">
                   <tr className="text-left">
                     <th className="px-5 py-4">Receipt</th>
+
                     <th className="px-5 py-4">Date</th>
+
                     <th className="px-5 py-4">Customer</th>
+
                     <th className="px-5 py-4">Payment</th>
+
                     <th className="px-5 py-4">Total</th>
+
                     <th className="px-5 py-4">Cashier</th>
+
                     <th className="px-5 py-4 text-right">Actions</th>
                   </tr>
                 </thead>
@@ -197,7 +222,16 @@ export default function SalesHistoryPage() {
                       </td>
 
                       <td className="px-5 py-4">
-                        <div className="flex justify-end">
+                        <div className="flex justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => openReceipt(sale.id)}
+                            className="inline-flex items-center rounded-lg border px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                          >
+                            <ReceiptText className="mr-2 h-4 w-4" />
+                            Receipt
+                          </button>
+
                           <Link
                             href={`/sales/${sale.id}`}
                             className="inline-flex items-center rounded-lg border px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"

@@ -1,5 +1,14 @@
 import { supabase } from "@/lib/supabase/client";
 
+export type SupplierWorkspaceScope = {
+  organizationId: string;
+};
+
+export type SupplierStatementScope = {
+  organizationId: string;
+  branchId: string;
+};
+
 export type Supplier = {
   id: string;
   organization_id: string;
@@ -108,9 +117,35 @@ function isOverdue(dueDate: string | null, amountDue: number, status: string) {
   return due < today;
 }
 
+function validateOrganizationId(organizationId: string) {
+  if (!organizationId?.trim()) {
+    throw new Error("An organisation must be selected.");
+  }
+}
+
+function validateStatementScope(scope: SupplierStatementScope) {
+  if (!scope.organizationId?.trim()) {
+    throw new Error("An organisation must be selected.");
+  }
+
+  if (!scope.branchId?.trim()) {
+    throw new Error("A branch must be selected.");
+  }
+}
+
+/**
+ * Supplier directory.
+ *
+ * Suppliers are organisation-level master records, so this query is
+ * intentionally scoped by organisation rather than branch.
+ *
+ * Database RLS independently requires suppliers.view.
+ */
 export async function getSuppliers(
   organizationId: string
 ): Promise<Supplier[]> {
+  validateOrganizationId(organizationId);
+
   const { data, error } = await supabase
     .from("suppliers")
     .select("*")
@@ -122,6 +157,11 @@ export async function getSuppliers(
   return (data ?? []) as Supplier[];
 }
 
+/**
+ * Create a supplier within an organisation.
+ *
+ * Database RLS independently requires suppliers.manage.
+ */
 export async function createSupplier(values: {
   organization_id: string;
   name: string;
@@ -134,6 +174,8 @@ export async function createSupplier(values: {
   postcode?: string | null;
   notes?: string | null;
 }) {
+  validateOrganizationId(values.organization_id);
+
   const { data, error } = await supabase
     .from("suppliers")
     .insert(values)
@@ -145,9 +187,22 @@ export async function createSupplier(values: {
   return data;
 }
 
+/**
+ * Consolidated supplier financial position for the selected organisation.
+ *
+ * Supplier records require suppliers.view.
+ * Supplier invoice/payment rows independently require finance.view through
+ * their hardened RLS policies.
+ *
+ * This deliberately remains organisation-wide because suppliers are
+ * organisation-level master records and this represents the consolidated
+ * supplier liability position.
+ */
 export async function getSupplierBalances(
   organizationId: string
 ): Promise<SupplierBalance[]> {
+  validateOrganizationId(organizationId);
+
   const [suppliersResult, invoicesResult, paymentsResult] = await Promise.all([
     supabase
       .from("suppliers")
@@ -254,13 +309,30 @@ export async function getSupplierBalances(
   });
 }
 
+/**
+ * Financial statement for one supplier in the currently selected workspace.
+ *
+ * The supplier itself is constrained to the selected organisation.
+ * Invoice and payment rows are constrained to both organisation and branch.
+ *
+ * supplier_invoices and supplier_payments RLS independently require
+ * finance.view.
+ */
 export async function getSupplierStatement(
-  supplierId: string
+  supplierId: string,
+  scope: SupplierStatementScope
 ): Promise<SupplierStatement> {
+  if (!supplierId?.trim()) {
+    throw new Error("A supplier must be selected.");
+  }
+
+  validateStatementScope(scope);
+
   const supplierResult = await supabase
     .from("suppliers")
     .select("*")
     .eq("id", supplierId)
+    .eq("organization_id", scope.organizationId)
     .single();
 
   if (supplierResult.error) {
@@ -274,20 +346,22 @@ export async function getSupplierStatement(
       .from("supplier_invoices")
       .select(
         `
-            id,
-            invoice_number,
-            invoice_date,
-            due_date,
-            status,
-            total_amount,
-            amount_paid,
-            amount_due,
-            purchase_order_id,
-            branches(name),
-            purchase_orders(po_number)
-          `
+          id,
+          invoice_number,
+          invoice_date,
+          due_date,
+          status,
+          total_amount,
+          amount_paid,
+          amount_due,
+          purchase_order_id,
+          branches(name),
+          purchase_orders(po_number)
+        `
       )
       .eq("supplier_id", supplierId)
+      .eq("organization_id", scope.organizationId)
+      .eq("branch_id", scope.branchId)
       .neq("status", "CANCELLED")
       .order("invoice_date", { ascending: false }),
 
@@ -295,18 +369,20 @@ export async function getSupplierStatement(
       .from("supplier_payments")
       .select(
         `
-            id,
-            supplier_invoice_id,
-            amount,
-            payment_method,
-            reference,
-            payment_date,
-            notes,
-            created_at,
-            supplier_invoices(invoice_number)
-          `
+          id,
+          supplier_invoice_id,
+          amount,
+          payment_method,
+          reference,
+          payment_date,
+          notes,
+          created_at,
+          supplier_invoices(invoice_number)
+        `
       )
       .eq("supplier_id", supplierId)
+      .eq("organization_id", scope.organizationId)
+      .eq("branch_id", scope.branchId)
       .order("payment_date", { ascending: false })
       .order("created_at", { ascending: false }),
   ]);

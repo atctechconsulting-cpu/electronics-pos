@@ -51,9 +51,21 @@ export type CreateCustomerInput = {
   notes?: string;
 };
 
+export type CustomerWorkspaceScope = {
+  organizationId: string;
+};
+
+function requireOrganizationId(organizationId: string) {
+  if (!organizationId) {
+    throw new Error("An organisation is required.");
+  }
+}
+
 export async function listCustomers(
   organizationId: string
 ): Promise<Customer[]> {
+  requireOrganizationId(organizationId);
+
   const { data, error } = await supabase
     .from("customers")
     .select("*")
@@ -72,6 +84,8 @@ export async function searchCustomers(
   organizationId: string,
   search: string
 ): Promise<Customer[]> {
+  requireOrganizationId(organizationId);
+
   if (!search.trim()) {
     return listCustomers(organizationId);
   }
@@ -103,6 +117,8 @@ export async function searchCustomers(
 }
 
 export async function createCustomer(input: CreateCustomerInput) {
+  requireOrganizationId(input.organization_id);
+
   const { data: code, error: codeError } = await supabase.rpc(
     "generate_customer_code",
     {
@@ -116,7 +132,16 @@ export async function createCustomer(input: CreateCustomerInput) {
 
   const {
     data: { user },
+    error: userError,
   } = await supabase.auth.getUser();
+
+  if (userError) {
+    throw new Error(userError.message);
+  }
+
+  if (!user) {
+    throw new Error("You must be signed in to create a customer.");
+  }
 
   const { data, error } = await supabase
     .from("customers")
@@ -124,8 +149,7 @@ export async function createCustomer(input: CreateCustomerInput) {
       ...input,
 
       customer_code: code,
-
-      created_by: user?.id,
+      created_by: user.id,
 
       last_name: input.last_name || null,
       company_name: input.company_name || null,
@@ -148,17 +172,61 @@ export async function createCustomer(input: CreateCustomerInput) {
     throw new Error(error.message);
   }
 
-  return data;
+  return data as Customer;
 }
 
 export async function updateCustomer(
   id: string,
-  updates: Partial<CreateCustomerInput>
-) {
+  scope: CustomerWorkspaceScope,
+  updates: Partial<Omit<CreateCustomerInput, "organization_id">>
+): Promise<Customer> {
+  requireOrganizationId(scope.organizationId);
+
+  if (!id) {
+    throw new Error("A customer is required.");
+  }
+
+  /*
+   * organisation_id is deliberately excluded from updates.
+   *
+   * A customer cannot be moved between AlphaPOS organisations through the
+   * customer service.
+   */
   const { data, error } = await supabase
     .from("customers")
-    .update(updates)
+    .update({
+      ...updates,
+
+      ...(updates.last_name !== undefined
+        ? { last_name: updates.last_name || null }
+        : {}),
+
+      ...(updates.company_name !== undefined
+        ? { company_name: updates.company_name || null }
+        : {}),
+
+      ...(updates.email !== undefined ? { email: updates.email || null } : {}),
+
+      ...(updates.phone !== undefined ? { phone: updates.phone || null } : {}),
+
+      ...(updates.address_line_1 !== undefined
+        ? { address_line_1: updates.address_line_1 || null }
+        : {}),
+
+      ...(updates.address_line_2 !== undefined
+        ? { address_line_2: updates.address_line_2 || null }
+        : {}),
+
+      ...(updates.city !== undefined ? { city: updates.city || null } : {}),
+
+      ...(updates.postcode !== undefined
+        ? { postcode: updates.postcode || null }
+        : {}),
+
+      ...(updates.notes !== undefined ? { notes: updates.notes || null } : {}),
+    })
     .eq("id", id)
+    .eq("organization_id", scope.organizationId)
     .select()
     .single();
 
@@ -166,16 +234,26 @@ export async function updateCustomer(
     throw new Error(error.message);
   }
 
-  return data;
+  return data as Customer;
 }
 
-export async function deactivateCustomer(id: string) {
+export async function deactivateCustomer(
+  id: string,
+  scope: CustomerWorkspaceScope
+): Promise<void> {
+  requireOrganizationId(scope.organizationId);
+
+  if (!id) {
+    throw new Error("A customer is required.");
+  }
+
   const { error } = await supabase
     .from("customers")
     .update({
       is_active: false,
     })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("organization_id", scope.organizationId);
 
   if (error) {
     throw new Error(error.message);

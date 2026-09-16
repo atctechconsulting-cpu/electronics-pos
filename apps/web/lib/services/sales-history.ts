@@ -38,9 +38,12 @@ export type SalesHistoryRecord = {
   }[];
 };
 
-type GetSalesHistoryInput = {
+export type SalesWorkspaceScope = {
   organizationId: string;
-  branchId?: string | null;
+  branchId: string;
+};
+
+type GetSalesHistoryInput = SalesWorkspaceScope & {
   search?: string;
 };
 
@@ -49,6 +52,10 @@ export async function getSalesHistory({
   branchId,
   search = "",
 }: GetSalesHistoryInput): Promise<SalesHistoryRecord[]> {
+  if (!organizationId || !branchId) {
+    return [];
+  }
+
   let query = supabase
     .from("sales")
     .select(
@@ -91,16 +98,13 @@ export async function getSalesHistory({
     `
     )
     .eq("organization_id", organizationId)
+    .eq("branch_id", branchId)
     .eq("status", "COMPLETED")
     .order("completed_at", {
       ascending: false,
       nullsFirst: false,
     })
     .limit(100);
-
-  if (branchId) {
-    query = query.eq("branch_id", branchId);
-  }
 
   const trimmedSearch = search.trim();
 
@@ -112,6 +116,7 @@ export async function getSalesHistory({
 
   if (error) {
     console.error("Failed to load sales history:", error);
+
     throw new Error(error.message || "Unable to load sales history.");
   }
 

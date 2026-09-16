@@ -3,6 +3,7 @@
 import { Printer, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { useAuth } from "@/components/auth-provider";
 import {
   getReturnReceipt,
   type ReturnReceiptData,
@@ -19,7 +20,10 @@ export function ReturnReceiptDialog({
   returnId,
   onClose,
 }: ReturnReceiptDialogProps) {
+  const { organization, branch, switchingContext, accessLoading } = useAuth();
+
   const [receipt, setReceipt] = useState<ReturnReceiptData | null>(null);
+
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
@@ -27,7 +31,19 @@ export function ReturnReceiptDialog({
 
   useEffect(() => {
     async function loadReceipt() {
-      if (!open || !returnId) {
+      if (
+        !open ||
+        !returnId ||
+        !organization ||
+        !branch ||
+        switchingContext ||
+        accessLoading
+      ) {
+        setReceipt(null);
+        setErrorMessage("");
+
+        setLoading(Boolean(open && (switchingContext || accessLoading)));
+
         return;
       }
 
@@ -36,7 +52,11 @@ export function ReturnReceiptDialog({
       setReceipt(null);
 
       try {
-        const data = await getReturnReceipt(returnId);
+        const data = await getReturnReceipt(returnId, {
+          organizationId: organization.id,
+          branchId: branch.id,
+        });
+
         setReceipt(data);
       } catch (error: unknown) {
         setErrorMessage(
@@ -50,7 +70,7 @@ export function ReturnReceiptDialog({
     }
 
     void loadReceipt();
-  }, [open, returnId]);
+  }, [open, returnId, organization, branch, switchingContext, accessLoading]);
 
   function handleClose() {
     setReceipt(null);
@@ -69,6 +89,7 @@ export function ReturnReceiptDialog({
       setErrorMessage(
         "Unable to open the print window. Please allow pop-ups for this site."
       );
+
       return;
     }
 
@@ -158,8 +179,8 @@ export function ReturnReceiptDialog({
             }
 
             .item-name {
-              font-weight: 700;
               margin-bottom: 3px;
+              font-weight: 700;
             }
 
             .item-meta {

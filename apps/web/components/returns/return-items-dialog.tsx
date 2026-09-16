@@ -59,11 +59,15 @@ export function ReturnItemsDialog({
   >({});
 
   const [refundMethod, setRefundMethod] = useState<RefundMethod>("CASH");
+
   const [reason, setReason] = useState("");
+
   const [notes, setNotes] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
+
   const [closing, setClosing] = useState(false);
+
   const [errorMessage, setErrorMessage] = useState("");
 
   const [completedReturn, setCompletedReturn] =
@@ -92,7 +96,7 @@ export function ReturnItemsDialog({
     setReceiptOpen(false);
     setSubmitting(false);
     setClosing(false);
-  }, [open]);
+  }, [open, sale]);
 
   const selectedItems = useMemo(
     () =>
@@ -101,6 +105,14 @@ export function ReturnItemsDialog({
       ),
     [selections]
   );
+
+  const totalRemainingReturnable = useMemo(
+    () =>
+      sale.items.reduce((total, item) => total + item.remaining_returnable, 0),
+    [sale.items]
+  );
+
+  const nothingLeftToReturn = totalRemainingReturnable === 0;
 
   const refundTotal = useMemo(() => {
     if (refundMethod === "NO_REFUND") {
@@ -124,6 +136,12 @@ export function ReturnItemsDialog({
     saleItemId: string,
     selection: ReturnItemSelection | null
   ) {
+    const item = sale.items.find((saleItem) => saleItem.id === saleItemId);
+
+    if (selection && (!item || item.remaining_returnable <= 0)) {
+      return;
+    }
+
     setSelections((current) => ({
       ...current,
       [saleItemId]: selection,
@@ -133,6 +151,10 @@ export function ReturnItemsDialog({
   }
 
   function validateReturn() {
+    if (nothingLeftToReturn) {
+      return "All items from this sale have already been returned.";
+    }
+
     if (selectedItems.length === 0) {
       return "Select at least one item to return.";
     }
@@ -146,8 +168,13 @@ export function ReturnItemsDialog({
         return "One of the selected sale items could not be found.";
       }
 
-      if (selection.quantity < 1 || selection.quantity > item.quantity) {
-        return `Enter a valid return quantity for ${item.product_name}.`;
+      if (
+        selection.quantity < 1 ||
+        selection.quantity > item.remaining_returnable
+      ) {
+        return `Only ${item.remaining_returnable} unit${
+          item.remaining_returnable === 1 ? "" : "s"
+        } of ${item.product_name} remain available for return.`;
       }
 
       if (
@@ -187,11 +214,6 @@ export function ReturnItemsDialog({
         notes,
       });
 
-      /*
-       * Do not refresh the parent page here.
-       * Refreshing would unmount this dialog before the
-       * success screen can be displayed.
-       */
       setCompletedReturn(result);
     } catch (error: unknown) {
       setErrorMessage(
@@ -209,10 +231,6 @@ export function ReturnItemsDialog({
       return;
     }
 
-    /*
-     * Refresh the Sale Details page only after the user
-     * finishes with the success screen.
-     */
     if (completedReturn) {
       setClosing(true);
 
@@ -328,10 +346,16 @@ export function ReturnItemsDialog({
 
           <AppDialogActionButton
             onClick={handleCompleteReturn}
-            disabled={submitting || selectedItems.length === 0}
+            disabled={
+              submitting || selectedItems.length === 0 || nothingLeftToReturn
+            }
             variant="danger"
           >
-            {submitting ? "Completing Return..." : "Complete Return"}
+            {submitting
+              ? "Completing Return..."
+              : nothingLeftToReturn
+                ? "Fully Returned"
+                : "Complete Return"}
           </AppDialogActionButton>
         </AppDialogFooter>
       }
@@ -359,11 +383,30 @@ export function ReturnItemsDialog({
           </div>
         </div>
 
+        {nothingLeftToReturn && (
+          <div className="rounded-xl border border-green-200 bg-green-50 p-4">
+            <div className="flex gap-3">
+              <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-green-600" />
+
+              <div>
+                <p className="font-medium text-green-800">
+                  Sale fully returned
+                </p>
+
+                <p className="mt-1 text-sm text-green-700">
+                  All items from this sale have already been returned. No
+                  further return can be processed.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div>
           <h3 className="font-semibold text-slate-900">Select items</h3>
 
           <p className="mt-1 text-sm text-slate-500">
-            Choose the products and quantities being returned.
+            Previously returned quantities are excluded automatically.
           </p>
 
           <div className="mt-4 space-y-4">
@@ -379,62 +422,66 @@ export function ReturnItemsDialog({
           </div>
         </div>
 
-        <RefundMethodSelector
-          value={refundMethod}
-          onChange={setRefundMethod}
-          disabled={submitting}
-        />
-
-        <div className="grid gap-5 md:grid-cols-2">
-          <div>
-            <label className="text-sm font-medium text-slate-700">
-              Return reason
-            </label>
-
-            <select
-              value={reason}
-              onChange={(event) => setReason(event.target.value)}
+        {!nothingLeftToReturn && (
+          <>
+            <RefundMethodSelector
+              value={refundMethod}
+              onChange={setRefundMethod}
               disabled={submitting}
-              className="mt-1 w-full rounded-lg border px-3 py-2.5 disabled:opacity-50"
-            >
-              <option value="">Select a reason</option>
-
-              {returnReasons.map((returnReason) => (
-                <option key={returnReason} value={returnReason}>
-                  {returnReason}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="text-sm font-medium text-slate-700">
-              Return notes
-            </label>
-
-            <textarea
-              value={notes}
-              onChange={(event) => setNotes(event.target.value)}
-              disabled={submitting}
-              rows={3}
-              className="mt-1 w-full rounded-lg border px-3 py-2.5 disabled:opacity-50"
-              placeholder="Optional additional information"
             />
-          </div>
-        </div>
 
-        <ReturnSummary
-          items={sale.items}
-          selections={selections}
-          refundMethod={refundMethod}
-        />
+            <div className="grid gap-5 md:grid-cols-2">
+              <div>
+                <label className="text-sm font-medium text-slate-700">
+                  Return reason
+                </label>
 
-        {selectedItems.length > 0 && (
-          <div className="flex justify-between rounded-xl bg-slate-900 p-5 text-white">
-            <span className="font-medium">Refund to customer</span>
+                <select
+                  value={reason}
+                  onChange={(event) => setReason(event.target.value)}
+                  disabled={submitting}
+                  className="mt-1 w-full rounded-lg border px-3 py-2.5 disabled:opacity-50"
+                >
+                  <option value="">Select a reason</option>
 
-            <Currency amount={refundTotal} className="text-xl font-bold" />
-          </div>
+                  {returnReasons.map((returnReason) => (
+                    <option key={returnReason} value={returnReason}>
+                      {returnReason}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-sm font-medium text-slate-700">
+                  Return notes
+                </label>
+
+                <textarea
+                  value={notes}
+                  onChange={(event) => setNotes(event.target.value)}
+                  disabled={submitting}
+                  rows={3}
+                  className="mt-1 w-full rounded-lg border px-3 py-2.5 disabled:opacity-50"
+                  placeholder="Optional additional information"
+                />
+              </div>
+            </div>
+
+            <ReturnSummary
+              items={sale.items}
+              selections={selections}
+              refundMethod={refundMethod}
+            />
+
+            {selectedItems.length > 0 && (
+              <div className="flex justify-between rounded-xl bg-slate-900 p-5 text-white">
+                <span className="font-medium">Refund to customer</span>
+
+                <Currency amount={refundTotal} className="text-xl font-bold" />
+              </div>
+            )}
+          </>
         )}
 
         {errorMessage && (

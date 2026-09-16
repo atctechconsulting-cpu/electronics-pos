@@ -1,5 +1,10 @@
 import { supabase } from "@/lib/supabase/client";
 
+export type WorkspaceScope = {
+  organizationId: string;
+  branchId: string;
+};
+
 export type PurchaseOrderStatus =
   | "DRAFT"
   | "SUBMITTED"
@@ -40,6 +45,7 @@ export type CreatePurchaseOrderResult = {
 
 export type PurchaseOrderRow = {
   id: string;
+  organization_id: string;
   po_number: string;
   status: PurchaseOrderStatus;
   expected_delivery_date: string | null;
@@ -107,6 +113,29 @@ export type ReceivePurchaseOrderResult = {
   total_ordered: number;
   total_received: number;
 };
+
+function mapPurchaseOrderRow(purchaseOrder: any): PurchaseOrderRow {
+  return {
+    id: purchaseOrder.id,
+    organization_id: purchaseOrder.organization_id,
+    po_number: purchaseOrder.po_number,
+    status: purchaseOrder.status as PurchaseOrderStatus,
+    expected_delivery_date: purchaseOrder.expected_delivery_date,
+    ordered_at: purchaseOrder.ordered_at,
+    received_at: purchaseOrder.received_at,
+    subtotal: Number(purchaseOrder.subtotal ?? 0),
+    tax_amount: Number(purchaseOrder.tax_amount ?? 0),
+    discount_amount: Number(purchaseOrder.discount_amount ?? 0),
+    total_amount: Number(purchaseOrder.total_amount ?? 0),
+    notes: purchaseOrder.notes,
+    created_at: purchaseOrder.created_at,
+    supplier_id: purchaseOrder.supplier_id,
+    supplier_name: purchaseOrder.suppliers?.name ?? "Unknown supplier",
+    branch_id: purchaseOrder.branch_id,
+    branch_name: purchaseOrder.branches?.name ?? "Unknown branch",
+    created_by_name: purchaseOrder.profiles?.full_name ?? "Unknown user",
+  };
+}
 
 export async function createPurchaseOrder(
   input: CreatePurchaseOrderInput
@@ -201,12 +230,21 @@ export async function receivePurchaseOrderGoods(
   return data as ReceivePurchaseOrderResult;
 }
 
-export async function getPurchaseOrders(): Promise<PurchaseOrderRow[]> {
+export async function getPurchaseOrders(
+  scope: WorkspaceScope
+): Promise<PurchaseOrderRow[]> {
+  if (!scope.organizationId || !scope.branchId) {
+    throw new Error(
+      "Organisation and branch are required to load purchase orders."
+    );
+  }
+
   const { data, error } = await supabase
     .from("purchase_orders")
     .select(
       `
       id,
+      organization_id,
       po_number,
       status,
       expected_delivery_date,
@@ -225,72 +263,74 @@ export async function getPurchaseOrders(): Promise<PurchaseOrderRow[]> {
       profiles!purchase_orders_created_by_fkey ( full_name )
     `
     )
+    .eq("organization_id", scope.organizationId)
+    .eq("branch_id", scope.branchId)
     .order("created_at", { ascending: false });
 
   if (error) {
     throw new Error(error.message || "Unable to load purchase orders.");
   }
 
-  return (data ?? []).map((purchaseOrder: any) => ({
-    id: purchaseOrder.id,
-    po_number: purchaseOrder.po_number,
-    status: purchaseOrder.status as PurchaseOrderStatus,
-    expected_delivery_date: purchaseOrder.expected_delivery_date,
-    ordered_at: purchaseOrder.ordered_at,
-    received_at: purchaseOrder.received_at,
-    subtotal: Number(purchaseOrder.subtotal ?? 0),
-    tax_amount: Number(purchaseOrder.tax_amount ?? 0),
-    discount_amount: Number(purchaseOrder.discount_amount ?? 0),
-    total_amount: Number(purchaseOrder.total_amount ?? 0),
-    notes: purchaseOrder.notes,
-    created_at: purchaseOrder.created_at,
-    supplier_id: purchaseOrder.supplier_id,
-    supplier_name: purchaseOrder.suppliers?.name ?? "Unknown supplier",
-    branch_id: purchaseOrder.branch_id,
-    branch_name: purchaseOrder.branches?.name ?? "Unknown branch",
-    created_by_name: purchaseOrder.profiles?.full_name ?? "Unknown user",
-  }));
+  return (data ?? []).map(mapPurchaseOrderRow);
 }
 
 export async function getPurchaseOrderDetails(
-  purchaseOrderId: string
+  purchaseOrderId: string,
+  scope: WorkspaceScope
 ): Promise<PurchaseOrderDetails> {
   if (!purchaseOrderId) {
     throw new Error("Purchase order ID is required.");
+  }
+
+  if (!scope.organizationId || !scope.branchId) {
+    throw new Error(
+      "Organisation and branch are required to load the purchase order."
+    );
   }
 
   const { data: purchaseOrder, error: purchaseOrderError } = await supabase
     .from("purchase_orders")
     .select(
       `
-      id,
-      po_number,
-      status,
-      expected_delivery_date,
-      ordered_at,
-      received_at,
-      subtotal,
-      tax_amount,
-      discount_amount,
-      total_amount,
-      notes,
-      created_at,
-      supplier_id,
-      branch_id,
-      suppliers ( name ),
-      branches ( name ),
-      profiles!purchase_orders_created_by_fkey ( full_name )
-    `
+        id,
+        organization_id,
+        po_number,
+        status,
+        expected_delivery_date,
+        ordered_at,
+        received_at,
+        subtotal,
+        tax_amount,
+        discount_amount,
+        total_amount,
+        notes,
+        created_at,
+        supplier_id,
+        branch_id,
+        suppliers ( name ),
+        branches ( name ),
+        profiles!purchase_orders_created_by_fkey ( full_name )
+      `
     )
     .eq("id", purchaseOrderId)
+    .eq("organization_id", scope.organizationId)
+    .eq("branch_id", scope.branchId)
     .single();
 
   if (purchaseOrderError) {
     throw new Error(
-      purchaseOrderError.message || "Unable to load the purchase order."
+      purchaseOrderError.message ||
+        "Unable to load the purchase order in the selected workspace."
     );
   }
 
+  /*
+   * Items are loaded only after the parent purchase order has
+   * successfully passed the organisation + branch workspace check.
+   *
+   * purchase_order_items are therefore constrained by the verified
+   * parent purchase order ID rather than accepting an arbitrary PO ID.
+   */
   const { data: items, error: itemsError } = await supabase
     .from("purchase_order_items")
     .select(
@@ -311,7 +351,7 @@ export async function getPurchaseOrderDetails(
         )
       `
     )
-    .eq("purchase_order_id", purchaseOrderId)
+    .eq("purchase_order_id", purchaseOrder.id)
     .order("id");
 
   if (itemsError) {
@@ -321,24 +361,7 @@ export async function getPurchaseOrderDetails(
   }
 
   return {
-    id: purchaseOrder.id,
-    po_number: purchaseOrder.po_number,
-    status: purchaseOrder.status as PurchaseOrderStatus,
-    expected_delivery_date: purchaseOrder.expected_delivery_date,
-    ordered_at: purchaseOrder.ordered_at,
-    received_at: purchaseOrder.received_at,
-    subtotal: Number(purchaseOrder.subtotal ?? 0),
-    tax_amount: Number(purchaseOrder.tax_amount ?? 0),
-    discount_amount: Number(purchaseOrder.discount_amount ?? 0),
-    total_amount: Number(purchaseOrder.total_amount ?? 0),
-    notes: purchaseOrder.notes,
-    created_at: purchaseOrder.created_at,
-    supplier_id: purchaseOrder.supplier_id,
-    supplier_name: (purchaseOrder as any).suppliers?.name ?? "Unknown supplier",
-    branch_id: purchaseOrder.branch_id,
-    branch_name: (purchaseOrder as any).branches?.name ?? "Unknown branch",
-    created_by_name:
-      (purchaseOrder as any).profiles?.full_name ?? "Unknown user",
+    ...mapPurchaseOrderRow(purchaseOrder),
 
     items: (items ?? []).map((item: any) => ({
       id: item.id,

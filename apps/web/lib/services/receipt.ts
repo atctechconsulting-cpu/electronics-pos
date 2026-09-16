@@ -40,7 +40,15 @@ export type ReceiptData = {
   payments: ReceiptPayment[];
 };
 
-export async function getReceipt(saleId: string): Promise<ReceiptData> {
+export type ReceiptWorkspaceScope = {
+  organizationId: string;
+  branchId: string;
+};
+
+export async function getReceipt(
+  saleId: string,
+  scope: ReceiptWorkspaceScope
+): Promise<ReceiptData> {
   const { data: sale, error: saleError } = await supabase
     .from("sales")
     .select(
@@ -73,6 +81,8 @@ export async function getReceipt(saleId: string): Promise<ReceiptData> {
     `
     )
     .eq("id", saleId)
+    .eq("organization_id", scope.organizationId)
+    .eq("branch_id", scope.branchId)
     .single();
 
   if (saleError) {
@@ -99,6 +109,8 @@ export async function getReceipt(saleId: string): Promise<ReceiptData> {
     `
     )
     .eq("sale_id", saleId)
+    .eq("organization_id", scope.organizationId)
+    .eq("branch_id", scope.branchId)
     .order("created_at", { ascending: true });
 
   if (itemsError) {
@@ -117,6 +129,8 @@ export async function getReceipt(saleId: string): Promise<ReceiptData> {
     `
     )
     .eq("sale_id", saleId)
+    .eq("organization_id", scope.organizationId)
+    .eq("branch_id", scope.branchId)
     .order("created_at", { ascending: true });
 
   if (paymentsError) {

@@ -1,43 +1,65 @@
 "use client";
 
 import { Mail, Phone, Search, User } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { useAuth } from "@/components/auth-provider";
 import { CustomerDialog } from "@/components/customers/customer-dialog";
 import { searchCustomers, type Customer } from "@/lib/services/customers";
 
 export default function CustomersPage() {
-  const { organization } = useAuth();
+  const { organization, hasPermission, switchingContext, accessLoading } =
+    useAuth();
+
+  const canManageCustomers = hasPermission("customers.manage");
 
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
 
-  async function loadCustomers(searchValue = search) {
-    if (!organization) {
+  const loadCustomers = useCallback(
+    async (searchValue: string) => {
+      if (!organization?.id) {
+        setCustomers([]);
+        setLoading(false);
+        return;
+      }
+
+      try {
+        setLoading(true);
+        setErrorMessage("");
+
+        const data = await searchCustomers(organization.id, searchValue);
+
+        setCustomers(data);
+      } catch (error: unknown) {
+        setCustomers([]);
+
+        setErrorMessage(
+          error instanceof Error ? error.message : "Unable to load customers."
+        );
+      } finally {
+        setLoading(false);
+      }
+    },
+    [organization?.id]
+  );
+
+  useEffect(() => {
+    /*
+     * Never leave the previous organisation's customers visible while
+     * AlphaPOS is resolving a new workspace/access context.
+     */
+    if (switchingContext || accessLoading) {
+      setCustomers([]);
+      setErrorMessage("");
       return;
     }
 
-    setLoading(true);
-    setErrorMessage("");
-
-    try {
-      const data = await searchCustomers(organization.id, searchValue);
-
-      setCustomers(data);
-    } catch (error: unknown) {
-      setErrorMessage(
-        error instanceof Error ? error.message : "Unable to load customers."
-      );
-    } finally {
+    if (!organization?.id) {
+      setCustomers([]);
       setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    if (!organization) {
       return;
     }
 
@@ -48,7 +70,15 @@ export default function CustomersPage() {
     return () => {
       window.clearTimeout(timer);
     };
-  }, [organization, search]);
+  }, [
+    organization?.id,
+    search,
+    switchingContext,
+    accessLoading,
+    loadCustomers,
+  ]);
+
+  const pageLoading = loading || switchingContext || accessLoading;
 
   return (
     <div className="space-y-6">
@@ -61,7 +91,9 @@ export default function CustomersPage() {
           </p>
         </div>
 
-        <CustomerDialog onCustomerCreated={() => loadCustomers(search)} />
+        {canManageCustomers && (
+          <CustomerDialog onCustomerCreated={() => loadCustomers(search)} />
+        )}
       </div>
 
       <div className="rounded-xl border bg-white shadow-sm">
@@ -74,6 +106,7 @@ export default function CustomersPage() {
               onChange={(event) => setSearch(event.target.value)}
               className="w-full bg-transparent text-sm outline-none"
               placeholder="Search by name, phone, email, company or customer code..."
+              disabled={switchingContext || accessLoading}
             />
           </div>
         </div>
@@ -84,7 +117,7 @@ export default function CustomersPage() {
           </div>
         )}
 
-        {loading ? (
+        {pageLoading ? (
           <div className="p-8 text-center text-slate-500">
             Loading customers...
           </div>
