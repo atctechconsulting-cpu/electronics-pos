@@ -8,6 +8,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
 } from "react";
 
@@ -17,6 +18,7 @@ type Profile = {
   phone: string | null;
   avatar_url: string | null;
   job_title: string | null;
+  is_active: boolean;
 };
 
 export type Organization = {
@@ -60,6 +62,8 @@ type AuthContextValue = {
   loading: boolean;
   switchingContext: boolean;
   accessLoading: boolean;
+  hasOrganizationMemberships: boolean | null;
+  contextError: string | null;
 
   hasRole: (roleName: string) => boolean;
   hasPermission: (permissionKey: string) => boolean;
@@ -128,6 +132,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [switchingContext, setSwitchingContext] = useState(false);
   const [accessLoading, setAccessLoading] = useState(false);
+  const [hasOrganizationMemberships, setHasOrganizationMemberships] = useState<boolean | null>(null);
+  const [contextError, setContextError] = useState<string | null>(null);
+  const contextRequest = useRef(0);
 
   const clearEffectiveAccess = useCallback(() => {
     setRoles([]);
@@ -136,7 +143,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const loadEffectiveAccess = useCallback(
-    async (organizationId: string, branchId: string | null) => {
+    async (organizationId: string, branchId: string | null, requestId: number) => {
       setAccessLoading(true);
 
       try {
@@ -144,6 +151,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           target_organization_id: organizationId,
           target_branch_id: branchId,
         });
+
+        if (requestId !== contextRequest.current) return;
 
         if (error) {
           throw new Error(error.message);
@@ -170,10 +179,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         setIsSuperAdmin(Boolean(access?.is_super_admin));
       } catch (error) {
+        if (requestId !== contextRequest.current) return;
         clearEffectiveAccess();
         throw error;
       } finally {
-        setAccessLoading(false);
+        if (requestId === contextRequest.current) setAccessLoading(false);
       }
     },
     [clearEffectiveAccess]
@@ -183,6 +193,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (
       userId: string,
       organizationId: string,
+      requestId: number,
       preferredBranchId?: string | null
     ) => {
       const { data, error } = await supabase
@@ -200,6 +211,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         `
         )
         .eq("user_id", userId);
+
+      if (requestId !== contextRequest.current) return null;
 
       if (error) {
         throw new Error(error.message);
@@ -264,12 +277,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const loadAuthContext = useCallback(async () => {
+    const requestId = ++contextRequest.current;
     setLoading(true);
+    setSwitchingContext(false);
+    setAccessLoading(false);
+    setContextError(null);
+    setHasOrganizationMemberships(null);
+    setProfile(null);
+    setOrganizations([]);
+    setOrganization(null);
+    setBranches([]);
+    setBranch(null);
     clearEffectiveAccess();
 
     try {
       const { data: userData, error: userError } =
         await supabase.auth.getUser();
+
+      if (requestId !== contextRequest.current) return;
 
       if (userError || !userData.user) {
         setUser(null);
@@ -285,13 +310,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const currentUser = userData.user;
       setUser(currentUser);
 
-      const { data: profileData } = await supabase
+      const { data: profileData, error: profileError } = await supabase
         .from("profiles")
-        .select("id, full_name, phone, avatar_url, job_title")
+        .select("id, full_name, phone, avatar_url, job_title, is_active")
         .eq("id", currentUser.id)
         .single();
 
+      if (requestId !== contextRequest.current) return;
+      if (profileError) throw new Error("Unable to load your account status.");
+
       setProfile(profileData ?? null);
+
+      if (!profileData?.is_active) return;
 
       const { data: organizationLinks, error: organizationError } =
         await supabase
@@ -299,6 +329,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           .select(
             `
             is_default,
+            is_active,
             organizations:organization_id (
               id,
               name,
@@ -309,15 +340,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           .eq("user_id", currentUser.id)
           .order("is_default", { ascending: false });
 
+      if (requestId !== contextRequest.current) return;
+
       if (organizationError) {
         throw new Error(organizationError.message);
       }
+
+      setHasOrganizationMemberships((organizationLinks ?? []).length > 0);
 
       const availableOrganizations: Organization[] = (organizationLinks ?? [])
         .map((link: any) => {
           const linkedOrganization = link.organizations;
 
-          if (!linkedOrganization) return null;
+          if (!link.is_active || !linkedOrganization) return null;
 
           return {
             id: linkedOrganization.id,
@@ -353,15 +388,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       const selectedBranch = await loadBranchesForOrganization(
         currentUser.id,
-        selectedOrganization.id
+        selectedOrganization.id,
+        requestId
       );
+
+      if (requestId !== contextRequest.current) return;
 
       await loadEffectiveAccess(
         selectedOrganization.id,
-        selectedBranch?.id ?? null
+        selectedBranch?.id ?? null,
+        requestId
       );
     } catch (error) {
+      if (requestId !== contextRequest.current) return;
       console.error("Unable to load authentication context:", error);
+      setContextError("Unable to verify your workspace access. Please retry.");
 
       setOrganizations([]);
       setOrganization(null);
@@ -369,7 +410,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setBranch(null);
       clearEffectiveAccess();
     } finally {
-      setLoading(false);
+      if (requestId === contextRequest.current) setLoading(false);
     }
   }, [clearEffectiveAccess, loadBranchesForOrganization, loadEffectiveAccess]);
 
@@ -395,12 +436,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return () => {
       mounted = false;
+      contextRequest.current += 1;
       subscription.unsubscribe();
     };
   }, [loadAuthContext]);
 
   async function switchOrganization(organizationId: string) {
-    if (!user) return;
+    if (!user || !profile?.is_active) return;
 
     const nextOrganization = organizations.find(
       (candidate) => candidate.id === organizationId
@@ -414,6 +456,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    const requestId = ++contextRequest.current;
     setSwitchingContext(true);
     clearEffectiveAccess();
 
@@ -426,23 +469,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       const selectedBranch = await loadBranchesForOrganization(
         user.id,
-        nextOrganization.id
+        nextOrganization.id,
+        requestId
       );
+
+      if (requestId !== contextRequest.current) return;
 
       await loadEffectiveAccess(
         nextOrganization.id,
-        selectedBranch?.id ?? null
+        selectedBranch?.id ?? null,
+        requestId
       );
     } catch (error) {
+      if (requestId !== contextRequest.current) return;
       console.error("Unable to switch organization:", error);
+      await loadAuthContext();
       throw error;
     } finally {
-      setSwitchingContext(false);
+      if (requestId === contextRequest.current) setSwitchingContext(false);
     }
   }
 
   async function switchBranch(branchId: string) {
-    if (!user || !organization) return;
+    if (!user || !profile?.is_active || !organization) return;
 
     const nextBranch = branches.find(
       (candidate) =>
@@ -458,6 +507,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    const requestId = ++contextRequest.current;
     setSwitchingContext(true);
     clearEffectiveAccess();
 
@@ -465,12 +515,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setBranch(nextBranch);
       setStoredBranchId(user.id, organization.id, nextBranch.id);
 
-      await loadEffectiveAccess(organization.id, nextBranch.id);
+      await loadEffectiveAccess(organization.id, nextBranch.id, requestId);
     } catch (error) {
+      if (requestId !== contextRequest.current) return;
       console.error("Unable to switch branch:", error);
+      await loadAuthContext();
       throw error;
     } finally {
-      setSwitchingContext(false);
+      if (requestId === contextRequest.current) setSwitchingContext(false);
     }
   }
 
@@ -487,6 +539,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function signOut() {
+    contextRequest.current += 1;
+    clearEffectiveAccess();
+    setUser(null);
+    setProfile(null);
+    setOrganizations([]);
+    setOrganization(null);
+    setBranches([]);
+    setBranch(null);
     await supabase.auth.signOut();
   }
 
@@ -509,6 +569,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loading,
         switchingContext,
         accessLoading,
+        hasOrganizationMemberships,
+        contextError,
 
         hasRole,
         hasPermission,

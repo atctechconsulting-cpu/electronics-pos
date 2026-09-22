@@ -154,6 +154,7 @@ async function addOrganizationMembership(params: {
       user_id: params.userId,
       organization_id: params.organizationId,
       is_default: params.makeDefault,
+      is_active: true,
     },
     {
       onConflict: "user_id,organization_id",

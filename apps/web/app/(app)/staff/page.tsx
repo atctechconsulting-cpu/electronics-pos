@@ -13,6 +13,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useAuth } from "@/components/auth-provider";
 import { InviteStaffDialog } from "@/components/staff/invite-staff-dialog";
+import {
+  AppDialog, AppDialogFooter, AppDialogCancelButton, AppDialogActionButton,
+} from "@/components/ui/app-dialog";
 
 import {
   EmptyState,
@@ -25,12 +28,13 @@ import {
 import {
   getOrganizationStaff,
   getStaffAdministrationOptions,
+  setStaffActiveStatus,
   type StaffAdministrationOptions,
   type StaffMember,
 } from "@/lib/services/staff";
 
 export default function StaffPage() {
-  const { organization } = useAuth();
+  const { organization, user, refreshAuthContext } = useAuth();
 
   const [staff, setStaff] = useState<StaffMember[]>([]);
   const [options, setOptions] = useState<StaffAdministrationOptions | null>(
@@ -45,6 +49,9 @@ export default function StaffPage() {
   const [inviteOpen, setInviteOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [statusTarget, setStatusTarget] = useState<StaffMember | null>(null);
+  const [savingStatus, setSavingStatus] = useState(false);
+  const [statusError, setStatusError] = useState<string | null>(null);
 
   const loadStaff = useCallback(async () => {
     if (!organization?.id) {
@@ -91,7 +98,7 @@ export default function StaffPage() {
 
   const administrators = useMemo(
     () =>
-      staff.filter((member) =>
+      staff.filter((member) => member.is_active &&
         member.roles.some(
           (assignment) =>
             assignment.role_name === "super_admin" &&
@@ -138,6 +145,27 @@ export default function StaffPage() {
       .split("_")
       .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
       .join(" ");
+  }
+
+  async function changeMembershipStatus() {
+    if (!organization || !statusTarget || !options?.can_manage_staff) return;
+    setSavingStatus(true);
+    setStatusError(null);
+    try {
+      await setStaffActiveStatus({
+        organizationId: organization.id,
+        userId: statusTarget.user_id,
+        isActive: !statusTarget.organization_is_active,
+      });
+      const changedSelf = statusTarget.user_id === user?.id;
+      setStatusTarget(null);
+      if (changedSelf) await refreshAuthContext();
+      else await loadStaff();
+    } catch (err) {
+      setStatusError(err instanceof Error ? err.message : "Unable to change organisation access.");
+    } finally {
+      setSavingStatus(false);
+    }
   }
 
   function formatLastLogin(value: string | null) {
@@ -234,13 +262,13 @@ export default function StaffPage() {
             label="Administrators"
             value={loading ? "—" : administrators.length.toString()}
             icon={ShieldCheck}
-            description="Organisation super administrators"
+            description="Effective organisation super administrators"
           />
         </div>
 
         <SectionCard
           title="Team"
-          description="Staff members with access to this organisation."
+          description="Organisation members, including those whose access is inactive."
         >
           <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="relative w-full lg:max-w-md">
@@ -441,6 +469,22 @@ export default function StaffPage() {
                           <StatusBadge
                             status={member.is_active ? "ACTIVE" : "INACTIVE"}
                           />
+                          <p className="mt-2 text-xs text-slate-500">
+                            Account: {member.account_is_active ? "Active" : "Inactive"}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            Organisation: {member.organization_is_active ? "Active" : "Inactive"}
+                          </p>
+                          {options?.can_manage_staff ? (
+                            <button
+                              type="button"
+                              disabled={!member.organization_is_active && !member.account_is_active}
+                              onClick={() => { setStatusTarget(member); setStatusError(null); }}
+                              className="mt-3 rounded-lg border px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {member.organization_is_active ? "Deactivate in organisation" : "Activate in organisation"}
+                            </button>
+                          ) : null}
                         </td>
                       </tr>
                     ))}
@@ -467,6 +511,35 @@ export default function StaffPage() {
           ) : null}
         </SectionCard>
       </div>
+
+      <AppDialog
+        open={statusTarget !== null}
+        title={statusTarget?.organization_is_active ? "Deactivate organisation access" : "Activate organisation access"}
+        description={`${statusTarget?.full_name || "This staff member"} · ${organization.name}`}
+        onClose={() => setStatusTarget(null)}
+        closeDisabled={savingStatus}
+        maxWidth="md"
+        footer={
+          <AppDialogFooter>
+            <AppDialogCancelButton onClick={() => setStatusTarget(null)} disabled={savingStatus} />
+            <AppDialogActionButton
+              onClick={() => void changeMembershipStatus()}
+              disabled={savingStatus}
+              variant={statusTarget?.organization_is_active ? "danger" : "primary"}
+            >
+              {savingStatus ? "Saving..." : "Confirm"}
+            </AppDialogActionButton>
+          </AppDialogFooter>
+        }
+      >
+        <p className="text-sm leading-6 text-slate-600">
+          {statusTarget?.organization_is_active
+            ? "This removes access to this organisation. Stored roles and branch assignments are retained for future reactivation."
+            : "This restores access using the staff member's stored roles and branch assignments in this organisation."}
+          {" "}Their global account and access to other organisations remain unchanged.
+        </p>
+        {statusError ? <p role="alert" className="mt-4 text-sm text-red-600">{statusError}</p> : null}
+      </AppDialog>
 
       {options?.can_manage_staff && options.can_manage_roles ? (
         <InviteStaffDialog

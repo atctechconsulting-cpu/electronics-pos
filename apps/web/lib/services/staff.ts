@@ -26,6 +26,8 @@ export type StaffMember = {
   avatar_url: string | null;
   job_title: string | null;
   is_active: boolean;
+  account_is_active: boolean;
+  organization_is_active: boolean;
   last_login_at: string | null;
   created_at: string;
   branches: StaffBranch[];

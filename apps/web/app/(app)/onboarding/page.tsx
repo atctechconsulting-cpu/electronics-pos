@@ -15,7 +15,7 @@ function slugify(value: string) {
 
 export default function OnboardingPage() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, profile, hasOrganizationMemberships, refreshAuthContext } = useAuth();
 
   const [businessName, setBusinessName] = useState("");
   const [branchName, setBranchName] = useState("Main Branch");
@@ -25,7 +25,7 @@ export default function OnboardingPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
-    if (!user) return;
+    if (!user || !profile?.is_active || hasOrganizationMemberships !== false) return;
 
     setLoading(true);
     setErrorMessage("");
@@ -44,8 +44,13 @@ export default function OnboardingPage() {
       return;
     }
 
+    await refreshAuthContext();
     router.push("/dashboard");
     router.refresh();
+  }
+
+  if (hasOrganizationMemberships !== false) {
+    return <p className="p-6 text-sm text-slate-600">Your account already has organisation membership. Select an active workspace or contact your administrator.</p>;
   }
 
   return (
