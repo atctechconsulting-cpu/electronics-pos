@@ -19,3 +19,15 @@ export const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
     persistSession: false,
   },
 });
+
+// One client per request: never put a caller's JWT on the shared admin client.
+export function createStaffActorClient(accessToken: string) {
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!anonKey) {
+    throw new Error("NEXT_PUBLIC_SUPABASE_ANON_KEY is not configured.");
+  }
+  return createClient(supabaseUrl!, anonKey, {
+    auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  });
+}

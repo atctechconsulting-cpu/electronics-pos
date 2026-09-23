@@ -6,11 +6,73 @@ import { FormEvent, useEffect, useState } from "react";
 
 import { supabase } from "@/lib/supabase/client";
 
+type InviteContext = {
+  accessToken: string;
+  refreshToken: string;
+  type: string | null;
+};
+
+function readInviteContext(): InviteContext | null {
+  if (typeof window === "undefined") return null;
+
+  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+
+  const error = hash.get("error");
+  const errorCode = hash.get("error_code");
+
+  if (error || errorCode) {
+    return null;
+  }
+
+  const accessToken = hash.get("access_token");
+  const refreshToken = hash.get("refresh_token");
+  const type = hash.get("type");
+
+  if (!accessToken || !refreshToken) {
+    return null;
+  }
+
+  if (type && type !== "invite") {
+    return null;
+  }
+
+  return {
+    accessToken,
+    refreshToken,
+    type,
+  };
+}
+
+function readInviteError(): string | null {
+  if (typeof window === "undefined") return null;
+
+  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+
+  const error = hash.get("error");
+  const errorCode = hash.get("error_code");
+  const description = hash.get("error_description");
+
+  if (!error && !errorCode) {
+    return null;
+  }
+
+  if (errorCode === "otp_expired") {
+    return "This invitation link has expired. Please ask your administrator to send a new invitation.";
+  }
+
+  if (description) {
+    return decodeURIComponent(description.replace(/\+/g, " "));
+  }
+
+  return "This invitation link is invalid or has expired. Please ask your administrator to send a new invitation.";
+}
+
 export default function AcceptInvitePage() {
   const router = useRouter();
 
   const [checkingSession, setCheckingSession] = useState(true);
   const [sessionReady, setSessionReady] = useState(false);
+  const [invitedUserId, setInvitedUserId] = useState<string | null>(null);
   const [email, setEmail] = useState<string | null>(null);
 
   const [password, setPassword] = useState("");
@@ -26,80 +88,84 @@ export default function AcceptInvitePage() {
     async function initialiseInvite() {
       try {
         setCheckingSession(true);
+        setSessionReady(false);
+        setInvitedUserId(null);
+        setEmail(null);
         setError(null);
 
         /*
-         * Supabase's browser client detects an implicit-flow invitation URL:
+         * Never trust an already-persisted browser session as proof that this
+         * page was opened from a valid staff invitation.
          *
-         * /accept-invite#access_token=...&refresh_token=...&type=invite
-         *
-         * and persists the authenticated session.
-         *
-         * Give the client an opportunity to process the URL, then retrieve
-         * the resulting session.
+         * A browser may already be signed in as another AlphaPOS user.
+         * The invitation URL itself must contain valid invite credentials.
          */
-        const {
-          data: { session },
-          error: sessionError,
-        } = await supabase.auth.getSession();
 
-        if (!mounted) return;
+        const inviteError = readInviteError();
 
-        if (sessionError) {
-          throw sessionError;
+        if (inviteError) {
+          if (!mounted) return;
+
+          setError(inviteError);
+          setCheckingSession(false);
+          return;
         }
 
-        if (session?.user) {
-          setEmail(session.user.email ?? null);
-          setSessionReady(true);
+        const invite = readInviteContext();
+
+        if (!invite) {
+          if (!mounted) return;
+
+          setError(
+            "This invitation link is invalid or has expired. Please ask your administrator to send a new invitation."
+          );
           setCheckingSession(false);
           return;
         }
 
         /*
-         * In some browsers the auth state may finish initialising just after
-         * the first getSession() call. Listen briefly for the session event.
+         * Explicitly establish the session from THIS invitation's credentials.
+         * This replaces any unrelated persisted session in the browser.
          */
         const {
-          data: { subscription },
-        } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-          if (!mounted || !nextSession?.user) return;
-
-          setEmail(nextSession.user.email ?? null);
-          setSessionReady(true);
-          setCheckingSession(false);
+          data: { session },
+          error: sessionError,
+        } = await supabase.auth.setSession({
+          access_token: invite.accessToken,
+          refresh_token: invite.refreshToken,
         });
 
-        window.setTimeout(async () => {
-          if (!mounted) return;
+        if (!mounted) return;
 
-          const {
-            data: { session: retrySession },
-          } = await supabase.auth.getSession();
-
-          if (!mounted) return;
-
-          if (retrySession?.user) {
-            setEmail(retrySession.user.email ?? null);
-            setSessionReady(true);
-          } else {
-            setError(
-              "This invitation link is invalid or has expired. Please ask your administrator to send a new invitation."
-            );
-          }
-
+        if (sessionError || !session?.user) {
+          setError(
+            "This invitation could not be verified. Please ask your administrator to send a new invitation."
+          );
           setCheckingSession(false);
-          subscription.unsubscribe();
-        }, 1500);
-      } catch (initialiseError) {
+          return;
+        }
+
+        setInvitedUserId(session.user.id);
+        setEmail(session.user.email ?? null);
+        setSessionReady(true);
+
+        /*
+         * Remove invitation credentials from the visible URL after the
+         * invitation identity has been successfully established.
+         */
+        window.history.replaceState(
+          {},
+          document.title,
+          window.location.pathname
+        );
+
+        setCheckingSession(false);
+      } catch {
         if (!mounted) return;
 
         setError(
-          initialiseError instanceof Error
-            ? initialiseError.message
-            : "Unable to verify this invitation."
+          "This invitation could not be verified. Please ask your administrator to send a new invitation."
         );
-
         setCheckingSession(false);
       }
     }
@@ -114,7 +180,7 @@ export default function AcceptInvitePage() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!sessionReady) {
+    if (!sessionReady || !invitedUserId) {
       setError(
         "Your invitation session is not available. Please reopen the invitation link."
       );
@@ -136,9 +202,21 @@ export default function AcceptInvitePage() {
       setError(null);
 
       /*
-       * The invitation link has already authenticated the invited user.
-       * updateUser therefore sets the password on their own Auth account.
+       * Re-check the active session immediately before changing the password.
+       * This prevents a stale or switched browser session from changing the
+       * password of a different AlphaPOS account.
        */
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+
+      if (userError || !user || user.id !== invitedUserId) {
+        throw new Error(
+          "Your invitation session has changed or expired. Please reopen the invitation link."
+        );
+      }
+
       const { error: updateError } = await supabase.auth.updateUser({
         password,
       });
@@ -148,11 +226,6 @@ export default function AcceptInvitePage() {
       }
 
       setCompleted(true);
-
-      /*
-       * Remove the access/refresh tokens from the visible browser URL.
-       */
-      window.history.replaceState({}, document.title, window.location.pathname);
 
       window.setTimeout(() => {
         router.replace("/dashboard");

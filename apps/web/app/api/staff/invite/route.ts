@@ -1,650 +1,125 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { supabaseAdmin } from "@/lib/supabase/admin";
+import { createStaffActorClient, supabaseAdmin } from "@/lib/supabase/admin";
 
 const inviteSchema = z.object({
   organizationId: z.string().uuid(),
-  email: z.string().email(),
+  email: z.string().trim().toLowerCase().email().max(254),
   fullName: z.string().trim().min(2).max(120),
   jobTitle: z.string().trim().max(120).nullable().optional(),
   phone: z.string().trim().max(40).nullable().optional(),
   roleId: z.string().uuid(),
   branchId: z.string().uuid().nullable().optional(),
-});
+}).strict();
 
-const organizationScopedRoles = new Set(["super_admin", "accountant"]);
-
-const branchScopedRoles = new Set([
-  "branch_manager",
-  "cashier",
-  "inventory_officer",
-]);
-
-function errorResponse(message: string, status: number) {
-  return NextResponse.json(
-    {
-      success: false,
-      error: message,
-    },
-    { status }
-  );
+function errorResponse(message: string, status: number, code: string) {
+  return NextResponse.json({ success: false, error: message, code }, { status });
 }
 
-async function userHasOrganizationPermission(params: {
-  userId: string;
-  organizationId: string;
-  permissionKey: string;
-}) {
-  const { data, error } = await supabaseAdmin
-    .from("user_roles")
-    .select(
-      `
-        id,
-        roles!inner (
-          id,
-          role_permissions!inner (
-            permissions!inner (
-              key
-            )
-          )
-        )
-      `
-    )
-    .eq("user_id", params.userId)
-    .eq("organization_id", params.organizationId)
-    .is("branch_id", null)
-    .eq("roles.role_permissions.permissions.key", params.permissionKey);
-
-  if (error) {
-    throw error;
-  }
-
-  return Boolean(data?.length);
+// Only explicit application errors cross the API boundary. Never return raw
+// Auth/PostgREST messages, SQL details, credentials or request tokens.
+function rpcErrorResponse(error: { code?: string; message?: string }, invitationSent = false) {
+  const known: Record<string, [number, string]> = {
+    INVITE_UNAUTHENTICATED: [401, "Your session is invalid or has expired."],
+    INVITE_FORBIDDEN: [403, "You no longer have permission to invite staff and assign roles in this organisation."],
+    INVITE_INVALID_SCOPE: [400, "Select a valid role and its required organisation or branch scope."],
+    INVITE_INVALID_TARGET: [400, "The staff account could not be verified. Refresh and try again."],
+    INVITE_ALREADY_MEMBER: [409, "This person already belongs to this organisation. Manage their access from Staff."],
+    INVITE_INACTIVE_MEMBER: [409, "This person has an inactive membership. Use the existing Staff activation control."],
+    INVITE_INACTIVE_TARGET: [409, "This person's global AlphaPOS account is inactive. Organisation administrators cannot reactivate it."],
+  };
+  const code = error.message && Object.hasOwn(known, error.message) ? error.message :
+    error.code === "42501" ? "INVITE_FORBIDDEN" :
+    error.code === "PGRST301" || error.code === "PGRST303" ? "INVITE_UNAUTHENTICATED" :
+    "INVITE_PROVISIONING_FAILED";
+  const [status, message] = known[code] ?? [500,
+    "Staff setup could not be confirmed. Refresh Staff before retrying."];
+  return errorResponse(message + (invitationSent ? " An invitation email may already have been sent." : ""), status, code);
 }
 
 async function findAuthUserByEmail(email: string) {
-  const normalizedEmail = email.trim().toLowerCase();
-
-  /*
-   * Supabase Auth does not currently expose a direct admin
-   * "get user by email" method, so search the Auth user pages.
-   *
-   * This avoids the previous hard-coded 1,000-user ceiling.
-   */
   const perPage = 1000;
-  let page = 1;
-
-  while (true) {
-    const { data, error } = await supabaseAdmin.auth.admin.listUsers({
-      page,
-      perPage,
-    });
-
-    if (error) {
-      throw error;
-    }
-
-    const existingUser = data.users.find(
-      (user) => user.email?.trim().toLowerCase() === normalizedEmail
-    );
-
-    if (existingUser) {
-      return existingUser;
-    }
-
-    if (data.users.length < perPage) {
-      return null;
-    }
-
-    page += 1;
+  for (let page = 1; ; page += 1) {
+    const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page, perPage });
+    if (error) throw error;
+    const user = data.users.find((candidate) => candidate.email?.trim().toLowerCase() === email);
+    if (user) return user;
+    if (data.users.length < perPage) return null;
   }
-}
-
-async function ensureProfile(params: {
-  userId: string;
-  fullName: string;
-  phone: string | null;
-  jobTitle: string | null;
-}) {
-  const { data: existingProfile, error: profileLookupError } =
-    await supabaseAdmin
-      .from("profiles")
-      .select("id")
-      .eq("id", params.userId)
-      .maybeSingle();
-
-  if (profileLookupError) {
-    throw profileLookupError;
-  }
-
-  if (!existingProfile) {
-    const { error: profileInsertError } = await supabaseAdmin
-      .from("profiles")
-      .insert({
-        id: params.userId,
-        full_name: params.fullName,
-        phone: params.phone,
-        job_title: params.jobTitle,
-        is_active: true,
-      });
-
-    if (profileInsertError) {
-      throw profileInsertError;
-    }
-
-    return;
-  }
-
-  /*
-   * Do not overwrite an existing user's personal profile merely because
-   * another organisation invited them.
-   *
-   * Their existing AlphaPOS identity belongs to them.
-   */
-}
-
-async function addOrganizationMembership(params: {
-  userId: string;
-  organizationId: string;
-  makeDefault: boolean;
-}) {
-  const { error } = await supabaseAdmin.from("user_organizations").upsert(
-    {
-      user_id: params.userId,
-      organization_id: params.organizationId,
-      is_default: params.makeDefault,
-      is_active: true,
-    },
-    {
-      onConflict: "user_id,organization_id",
-    }
-  );
-
-  if (error) {
-    throw error;
-  }
-}
-
-async function addBranchMembership(params: {
-  userId: string;
-  branchId: string;
-  makeDefault: boolean;
-}) {
-  const { error } = await supabaseAdmin.from("user_branches").upsert(
-    {
-      user_id: params.userId,
-      branch_id: params.branchId,
-      is_default: params.makeDefault,
-    },
-    {
-      onConflict: "user_id,branch_id",
-    }
-  );
-
-  if (error) {
-    throw error;
-  }
-}
-
-async function assignRole(params: {
-  userId: string;
-  organizationId: string;
-  roleId: string;
-  branchId: string | null;
-}) {
-  let existingAssignmentQuery = supabaseAdmin
-    .from("user_roles")
-    .select("id")
-    .eq("user_id", params.userId)
-    .eq("organization_id", params.organizationId)
-    .eq("role_id", params.roleId);
-
-  if (params.branchId) {
-    existingAssignmentQuery = existingAssignmentQuery.eq(
-      "branch_id",
-      params.branchId
-    );
-  } else {
-    existingAssignmentQuery = existingAssignmentQuery.is("branch_id", null);
-  }
-
-  const { data: existingAssignment, error: existingAssignmentError } =
-    await existingAssignmentQuery.maybeSingle();
-
-  if (existingAssignmentError) {
-    throw existingAssignmentError;
-  }
-
-  if (existingAssignment) {
-    return false;
-  }
-
-  const { error: assignmentError } = await supabaseAdmin
-    .from("user_roles")
-    .insert({
-      user_id: params.userId,
-      role_id: params.roleId,
-      organization_id: params.organizationId,
-      branch_id: params.branchId,
-    });
-
-  if (assignmentError) {
-    throw assignmentError;
-  }
-
-  return true;
 }
 
 export async function POST(request: NextRequest) {
+  let invitationSent = false;
   try {
-    /*
-     * STEP 1
-     * Authenticate the administrator making the request.
-     */
-    const authorization = request.headers.get("authorization");
+    const match = request.headers.get("authorization")?.match(/^Bearer\s+(\S+)$/i);
+    if (!match) return errorResponse("Authentication required.", 401, "INVITE_UNAUTHENTICATED");
 
-    if (!authorization?.startsWith("Bearer ")) {
-      return errorResponse("Authentication required.", 401);
+    const actor = createStaffActorClient(match[1]);
+    const { data: { user }, error: authError } = await actor.auth.getUser(match[1]);
+    if (authError || !user) {
+      return errorResponse("Your session is invalid or has expired.", 401, "INVITE_UNAUTHENTICATED");
     }
 
-    const accessToken = authorization.slice("Bearer ".length).trim();
-
-    if (!accessToken) {
-      return errorResponse("Authentication required.", 401);
-    }
-
-    const {
-      data: { user: requestingUser },
-      error: userError,
-    } = await supabaseAdmin.auth.getUser(accessToken);
-
-    if (userError || !requestingUser) {
-      return errorResponse("Your session is invalid or has expired.", 401);
-    }
-
-    /*
-     * STEP 2
-     * Validate request body.
-     */
-    const rawBody = await request.json();
-    const parsed = inviteSchema.safeParse(rawBody);
-
+    const body = await request.json().catch(() => null);
+    const parsed = inviteSchema.safeParse(body);
     if (!parsed.success) {
-      return errorResponse(
-        parsed.error.issues[0]?.message ?? "Invalid invitation details.",
-        400
-      );
+      return errorResponse("Invalid invitation details. Check the supplied fields.", 400, "INVITE_INVALID_INPUT");
     }
+    const { organizationId, roleId, branchId, email, fullName, phone, jobTitle } = parsed.data;
+    const scope = {
+      target_organization_id: organizationId,
+      target_role_id: roleId,
+      target_branch_id: branchId ?? null,
+    };
 
-    const {
-      organizationId,
-      email,
-      fullName,
-      jobTitle,
-      phone,
-      roleId,
-      branchId,
-    } = parsed.data;
+    // Both RPCs use the caller JWT. The database derives auth.uid(); no actor ID
+    // or cached permission result is supplied by this route or the browser.
+    const { error: preflightError } = await actor.rpc("authorize_staff_invitation", scope);
+    if (preflightError) return rpcErrorResponse(preflightError);
 
-    const normalizedEmail = email.trim().toLowerCase();
-    const normalizedPhone = phone?.trim() || null;
-    const normalizedJobTitle = jobTitle?.trim() || null;
-
-    /*
-     * STEP 3
-     * Verify organisation-level administration permissions.
-     */
-    let canManageStaff = false;
-    let canManageRoles = false;
-
-    try {
-      [canManageStaff, canManageRoles] = await Promise.all([
-        userHasOrganizationPermission({
-          userId: requestingUser.id,
-          organizationId,
-          permissionKey: "users.manage",
-        }),
-        userHasOrganizationPermission({
-          userId: requestingUser.id,
-          organizationId,
-          permissionKey: "roles.manage",
-        }),
-      ]);
-    } catch (permissionError) {
-      console.error("Unable to verify staff permissions:", permissionError);
-
-      return errorResponse(
-        "Unable to verify staff administration permission.",
-        500
-      );
-    }
-
-    if (!canManageStaff) {
-      return errorResponse("You do not have permission to invite staff.", 403);
-    }
-
-    if (!canManageRoles) {
-      return errorResponse(
-        "You do not have permission to assign staff roles.",
-        403
-      );
-    }
-
-    /*
-     * STEP 4
-     * Validate requested role.
-     */
-    const { data: role, error: roleError } = await supabaseAdmin
-      .from("roles")
-      .select("id, name")
-      .eq("id", roleId)
-      .single();
-
-    if (roleError || !role) {
-      return errorResponse("The selected role does not exist.", 400);
-    }
-
-    if (organizationScopedRoles.has(role.name)) {
-      if (branchId) {
-        return errorResponse(
-          `${role.name} must be assigned at organisation level.`,
-          400
-        );
-      }
-    } else if (branchScopedRoles.has(role.name)) {
-      if (!branchId) {
-        return errorResponse(`${role.name} requires a branch assignment.`, 400);
-      }
-    } else {
-      return errorResponse(
-        "This role cannot currently be assigned through staff invitations.",
-        400
-      );
-    }
-
-    /*
-     * STEP 5
-     * Validate branch belongs to the organisation.
-     */
-    if (branchId) {
-      const { data: branch, error: branchError } = await supabaseAdmin
-        .from("branches")
-        .select("id")
-        .eq("id", branchId)
-        .eq("organization_id", organizationId)
-        .single();
-
-      if (branchError || !branch) {
-        return errorResponse(
-          "The selected branch does not belong to this organisation.",
-          400
-        );
-      }
-    }
-
-    /*
-     * STEP 6
-     * Find out whether this is:
-     *
-     * A) a brand-new AlphaPOS user, or
-     * B) an existing AlphaPOS user joining another organisation.
-     */
-    let existingAuthUser;
-
-    try {
-      existingAuthUser = await findAuthUserByEmail(normalizedEmail);
-    } catch (lookupError) {
-      console.error(
-        "Unable to check existing authentication users:",
-        lookupError
-      );
-
-      return errorResponse("Unable to validate the staff email address.", 500);
-    }
-
-    /*
-     * EXISTING ALPHAPOS USER
-     */
-    if (existingAuthUser) {
-      const existingUserId = existingAuthUser.id;
-
-      /*
-       * Check whether they already belong to THIS organisation.
-       */
-      const {
-        data: existingOrganizationMembership,
-        error: membershipLookupError,
-      } = await supabaseAdmin
-        .from("user_organizations")
-        .select("user_id, organization_id")
-        .eq("user_id", existingUserId)
-        .eq("organization_id", organizationId)
-        .maybeSingle();
-
-      if (membershipLookupError) {
-        console.error(
-          "Unable to check organisation membership:",
-          membershipLookupError
-        );
-
-        return errorResponse(
-          "Unable to validate the staff member's organisation access.",
-          500
-        );
-      }
-
-      if (existingOrganizationMembership) {
-        return errorResponse(
-          "This person already belongs to this organisation. Manage their roles and branch access from the Staff page.",
-          409
-        );
-      }
-
-      /*
-       * Ensure legacy Auth accounts still have a profile row.
-       * Existing profile information is deliberately NOT overwritten.
-       */
-      try {
-        await ensureProfile({
-          userId: existingUserId,
-          fullName,
-          phone: normalizedPhone,
-          jobTitle: normalizedJobTitle,
-        });
-
-        /*
-         * Because this person already uses AlphaPOS, preserve their current
-         * default organisation. The new organisation is additional access.
-         */
-        await addOrganizationMembership({
-          userId: existingUserId,
-          organizationId,
-          makeDefault: false,
-        });
-
-        if (branchId) {
-          /*
-           * Preserve their existing default branch when adding access to
-           * another organisation.
-           */
-          await addBranchMembership({
-            userId: existingUserId,
-            branchId,
-            makeDefault: false,
-          });
-        }
-
-        await assignRole({
-          userId: existingUserId,
-          organizationId,
-          roleId,
-          branchId: branchId ?? null,
-        });
-      } catch (existingUserSetupError) {
-        console.error(
-          "Unable to add existing AlphaPOS user to organisation:",
-          existingUserSetupError
-        );
-
-        /*
-         * Roll back only the membership/access we just attempted to add.
-         * Never delete the existing Auth account or their other organisation
-         * memberships.
-         */
-        await supabaseAdmin
-          .from("user_roles")
-          .delete()
-          .eq("user_id", existingUserId)
-          .eq("organization_id", organizationId);
-
-        if (branchId) {
-          await supabaseAdmin
-            .from("user_branches")
-            .delete()
-            .eq("user_id", existingUserId)
-            .eq("branch_id", branchId);
-        }
-
-        await supabaseAdmin
-          .from("user_organizations")
-          .delete()
-          .eq("user_id", existingUserId)
-          .eq("organization_id", organizationId);
-
-        return errorResponse(
-          "The existing AlphaPOS account could not be added to this organisation.",
-          500
-        );
-      }
-
-      return NextResponse.json(
-        {
-          success: true,
-          userId: existingUserId,
-          email: normalizedEmail,
-          existingUser: true,
-          invitationSent: false,
-          message:
-            "Existing AlphaPOS user added successfully. They can use their current login credentials.",
-        },
-        {
-          status: 200,
-        }
-      );
-    }
-
-    /*
-     * NEW ALPHAPOS USER
-     *
-     * Supabase creates the Auth account and sends the invitation email.
-     */
-    const appUrl =
-      process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ||
-      "http://localhost:3000";
-
-    const { data: invitation, error: invitationError } =
-      await supabaseAdmin.auth.admin.inviteUserByEmail(normalizedEmail, {
-        data: {
-          full_name: fullName,
-          job_title: normalizedJobTitle,
-          phone: normalizedPhone,
-        },
+    // No privileged Auth lookup/invitation runs before database authorization.
+    let target = await findAuthUserByEmail(email);
+    const existingUser = Boolean(target);
+    if (!target) {
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") || "http://localhost:3000";
+      const { data, error } = await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
+        data: { full_name: fullName, job_title: jobTitle || null, phone: phone || null },
         redirectTo: `${appUrl}/accept-invite`,
       });
-
-    if (invitationError || !invitation.user) {
-      console.error("Supabase invitation failed:", invitationError);
-
-      return errorResponse(
-        invitationError?.message ?? "Unable to invite staff member.",
-        400
-      );
+      if (error || !data.user) {
+        return errorResponse("Unable to send the invitation. Refresh Staff before retrying.", 502, "INVITE_AUTH_FAILED");
+      }
+      target = data.user;
+      invitationSent = true;
     }
 
-    const invitedUserId = invitation.user.id;
+    const { error: finalizationError } = await actor.rpc("finalize_staff_invitation", {
+      ...scope,
+      target_user_id: target.id,
+      target_email: email,
+    });
+    if (finalizationError) return rpcErrorResponse(finalizationError, invitationSent);
 
-    /*
-     * STEP 7
-     * Complete AlphaPOS setup for the newly invited user.
-     */
-    try {
-      const { error: registrationError } = await supabaseAdmin.rpc(
-        "register_invited_staff",
-        {
-          target_user_id: invitedUserId,
-          target_organization_id: organizationId,
-          target_full_name: fullName,
-          target_job_title: normalizedJobTitle,
-          target_phone: normalizedPhone,
-        }
-      );
-
-      if (registrationError) {
-        throw registrationError;
-      }
-
-      if (branchId) {
-        await addBranchMembership({
-          userId: invitedUserId,
-          branchId,
-          makeDefault: true,
-        });
-      }
-
-      await assignRole({
-        userId: invitedUserId,
-        organizationId,
-        roleId,
-        branchId: branchId ?? null,
-      });
-    } catch (setupError) {
-      console.error(
-        "Invitation created but AlphaPOS staff setup failed:",
-        setupError
-      );
-
-      /*
-       * New user only:
-       * remove the newly-created Auth account if application setup failed.
-       *
-       * We NEVER do this for an existing AlphaPOS user.
-       */
-      const { error: cleanupError } =
-        await supabaseAdmin.auth.admin.deleteUser(invitedUserId);
-
-      if (cleanupError) {
-        console.error(
-          "Unable to clean up failed staff invitation:",
-          cleanupError
-        );
-      }
-
-      return errorResponse(
-        "The invitation could not be completed. No staff access was created.",
-        500
-      );
-    }
-
-    return NextResponse.json(
-      {
-        success: true,
-        userId: invitedUserId,
-        email: normalizedEmail,
-        existingUser: false,
-        invitationSent: true,
-        message: `Invitation sent to ${normalizedEmail}.`,
-      },
-      {
-        status: 201,
-      }
-    );
-  } catch (error) {
-    console.error("Unexpected staff invitation error:", error);
-
+    return NextResponse.json({
+      success: true,
+      userId: target.id,
+      email,
+      existingUser,
+      invitationSent,
+      message: existingUser
+        ? "Existing AlphaPOS user added successfully. They can use their current login credentials."
+        : `Invitation sent to ${email}.`,
+    }, { status: existingUser ? 200 : 201 });
+  } catch {
+    // Do not delete Auth users or compensate with service-role table deletes:
+    // another request may have provisioned them, or a timed-out RPC may have
+    // committed. Database mutations are atomic; Auth email delivery is not.
     return errorResponse(
-      "An unexpected error occurred while inviting the staff member.",
-      500
+      "Staff setup could not be confirmed. Refresh Staff before retrying." +
+        (invitationSent ? " An invitation email may already have been sent." : ""),
+      500,
+      "INVITE_PROVISIONING_FAILED"
     );
   }
 }
