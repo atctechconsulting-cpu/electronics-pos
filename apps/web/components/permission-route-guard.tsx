@@ -17,6 +17,7 @@ type RoutePermission = {
 };
 
 const protectedRoutes: RoutePermission[] = [
+  { path: "/branches", permission: "branches.view" },
   {
     path: "/dashboard",
     permission: "dashboard.view",
@@ -99,6 +100,7 @@ export function PermissionRouteGuard({ children }: PermissionRouteGuardProps) {
     branch,
     roles,
     hasPermission,
+    historicalReadPermissions,
     loading,
     accessLoading,
     switchingContext,
@@ -122,7 +124,11 @@ export function PermissionRouteGuard({ children }: PermissionRouteGuardProps) {
     );
   }
 
-  if (!requiredRoute || hasPermission(requiredRoute.permission)) {
+  const historicalReadAllowed = requiredRoute &&
+    (requiredRoute.path === "/sales" || requiredRoute.path === "/reports") &&
+    Object.values(historicalReadPermissions).some(keys => keys.includes(requiredRoute.permission));
+
+  if (!requiredRoute || hasPermission(requiredRoute.permission) || historicalReadAllowed) {
     return <>{children}</>;
   }
 

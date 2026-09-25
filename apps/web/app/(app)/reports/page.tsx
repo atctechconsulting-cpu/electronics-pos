@@ -17,7 +17,7 @@ import {
   TrendingUp,
   WalletCards,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAuth } from "@/components/auth-provider";
 import {
@@ -147,13 +147,17 @@ export default function ReportsPage() {
   const {
     organization,
     branch,
-    branches,
+    historicalBranches,
+    historicalReadPermissions,
     permissions,
     loading: authLoading,
     switchingContext,
     accessLoading,
     hasPermission,
   } = useAuth();
+  const branches = useMemo(() => historicalBranches.filter(item =>
+    historicalReadPermissions[item.id]?.includes("reports.view")), [historicalBranches, historicalReadPermissions]);
+  const reportRequest = useRef(0);
 
   const initialDates = useMemo(() => getPresetDates("30_DAYS"), []);
 
@@ -167,7 +171,7 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const canViewReports = hasPermission("reports.view");
+  const canViewReports = hasPermission("reports.view") || branches.length > 0;
 
   /*
    * The effective permissions in AuthProvider are loaded for the current
@@ -182,7 +186,7 @@ export default function ReportsPage() {
    */
   const [canViewAllBranches, setCanViewAllBranches] = useState(false);
 
-  const activeBranchId = branch?.id ?? null;
+  const activeBranchId = branches.find(item => item.id === branch?.id)?.id ?? branches[0]?.id ?? null;
 
   useEffect(() => {
     // Whenever the workspace changes, return reporting to the active branch
@@ -194,6 +198,7 @@ export default function ReportsPage() {
   }, [organization?.id, activeBranchId]);
 
   const loadReport = useCallback(async () => {
+    const requestId = ++reportRequest.current;
     if (
       authLoading ||
       switchingContext ||
@@ -214,9 +219,10 @@ export default function ReportsPage() {
       return;
     }
 
-    const requestedBranchId = branchId || activeBranchId;
+    const allBranches = branchId === "" && canViewAllBranches;
+    const requestedBranchId = allBranches ? null : branchId || activeBranchId;
 
-    if (!requestedBranchId) {
+    if (!requestedBranchId && !allBranches) {
       setError("No authorised branch is available for reporting.");
       setReport(null);
       setLoading(false);
@@ -235,8 +241,9 @@ export default function ReportsPage() {
         branchId: requestedBranchId,
       });
 
-      setReport(data);
+      if (requestId === reportRequest.current) setReport(data);
     } catch (reportError) {
+      if (requestId !== reportRequest.current) return;
       console.error(reportError);
 
       setError(
@@ -245,7 +252,7 @@ export default function ReportsPage() {
           : "Unable to load the business report."
       );
     } finally {
-      setLoading(false);
+      if (requestId === reportRequest.current) setLoading(false);
     }
   }, [
     authLoading,
@@ -257,6 +264,7 @@ export default function ReportsPage() {
     endDate,
     branchId,
     activeBranchId,
+    canViewAllBranches,
   ]);
 
   /*
@@ -330,6 +338,7 @@ export default function ReportsPage() {
     }
 
     void loadReport();
+    return () => { reportRequest.current += 1; };
   }, [
     authLoading,
     switchingContext,
@@ -352,83 +361,11 @@ export default function ReportsPage() {
     setEndDate(dates.endDate);
   }
 
-  async function loadAllBranchesReport() {
-    if (!organization?.id || !canViewReports || !canViewAllBranches) {
-      return;
-    }
-
-    setLoading(true);
-    setError("");
+  function handleBranchChange(nextBranchId: string) {
+    if (!nextBranchId && !canViewAllBranches) return;
+    reportRequest.current += 1;
     setReport(null);
-
-    try {
-      const data = await getBusinessReport({
-        organizationId: organization.id,
-        startDate,
-        endDate,
-        branchId: null,
-      });
-
-      setReport(data);
-    } catch (reportError) {
-      console.error(reportError);
-
-      setCanViewAllBranches(false);
-      setBranchId(activeBranchId ?? "");
-
-      setError(
-        reportError instanceof Error
-          ? reportError.message
-          : "Unable to load the business report."
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleBranchChange(nextBranchId: string) {
     setBranchId(nextBranchId);
-
-    if (!organization?.id || !canViewReports) {
-      return;
-    }
-
-    if (!nextBranchId) {
-      if (!canViewAllBranches) {
-        setBranchId(activeBranchId ?? "");
-        return;
-      }
-
-      await loadAllBranchesReport();
-      return;
-    }
-
-    setLoading(true);
-    setError("");
-    setReport(null);
-
-    try {
-      const data = await getBusinessReport({
-        organizationId: organization.id,
-        startDate,
-        endDate,
-        branchId: nextBranchId,
-      });
-
-      setReport(data);
-    } catch (reportError) {
-      console.error(reportError);
-
-      setBranchId(activeBranchId ?? "");
-
-      setError(
-        reportError instanceof Error
-          ? reportError.message
-          : "Unable to load the business report."
-      );
-    } finally {
-      setLoading(false);
-    }
   }
 
   const canViewFinance = Boolean(report?.access.can_view_finance);
@@ -506,13 +443,7 @@ export default function ReportsPage() {
         actions={
           <button
             type="button"
-            onClick={() => {
-              if (branchId === "" && canViewAllBranches) {
-                void loadAllBranchesReport();
-              } else {
-                void loadReport();
-              }
-            }}
+            onClick={() => void loadReport()}
             disabled={loading}
             className="inline-flex items-center justify-center gap-2 rounded-lg border bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -599,7 +530,7 @@ export default function ReportsPage() {
 
                 {branches.map((candidate) => (
                   <option key={candidate.id} value={candidate.id}>
-                    {candidate.name}
+                    {candidate.name}{candidate.is_active ? "" : " (inactive)"}
                   </option>
                 ))}
               </select>

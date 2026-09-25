@@ -9,6 +9,8 @@ import {
   type ReceivePurchaseOrderItem,
 } from "@/lib/services/purchase-orders";
 
+import { IMEI_ERROR, isValidImei } from "@/lib/validations/imei";
+
 type ReceiveLineState = {
   quantity: number;
   identifiers: string[];
@@ -151,6 +153,11 @@ export function ReceivePurchaseOrderDialog({
               item.requires_imei ? "IMEI" : "serial number"
             } value${line.quantity === 1 ? "" : "s"}.`
           );
+          return;
+        }
+
+        if (item.requires_imei && identifiers.some(value => !isValidImei(value))) {
+          setError(`${item.product_name}: ${IMEI_ERROR}`);
           return;
         }
 

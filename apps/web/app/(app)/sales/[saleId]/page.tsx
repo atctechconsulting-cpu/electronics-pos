@@ -14,8 +14,8 @@ import {
   UserRound,
 } from "lucide-react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useParams, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ReceiptDialog } from "@/components/pos/receipt-dialog";
 import { ReturnItemsDialog } from "@/components/returns/return-items-dialog";
@@ -24,15 +24,22 @@ import { getSaleDetails, type SaleDetails } from "@/lib/services/sale-details";
 export default function SaleDetailsPage() {
   const params = useParams<{ saleId: string }>();
   const saleId = params.saleId;
+  const requestedBranchId = useSearchParams().get("branch");
   const {
     organization,
     branch,
+    historicalBranches,
+    historicalReadPermissions,
     hasPermission,
     switchingContext,
     accessLoading,
   } = useAuth();
 
-  const canRefund = hasPermission("sales.refund");
+  const historyBranch = requestedBranchId === null ? branch : historicalBranches.find(item =>
+    item.id === requestedBranchId && item.organization_id === organization?.id &&
+    historicalReadPermissions[item.id]?.includes("sales.view"));
+  const canRefund = hasPermission("sales.refund") && historyBranch?.is_active === true && historyBranch.id === branch?.id;
+  const request = useRef(0);
 
   const [sale, setSale] = useState<SaleDetails | null>(null);
   const [loading, setLoading] = useState(true);
@@ -41,11 +48,12 @@ export default function SaleDetailsPage() {
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [returnOpen, setReturnOpen] = useState(false);
 
-  async function loadSale() {
+  const loadSale = useCallback(async () => {
+    const currentRequest = ++request.current;
     if (
       !saleId ||
       !organization ||
-      !branch ||
+      !historyBranch ||
       switchingContext ||
       accessLoading
     ) {
@@ -64,22 +72,26 @@ export default function SaleDetailsPage() {
     try {
       const data = await getSaleDetails(saleId, {
         organizationId: organization.id,
-        branchId: branch.id,
+        branchId: historyBranch.id,
       });
 
-      setSale(data);
+      if (currentRequest === request.current) setSale(data);
     } catch (error: unknown) {
+      if (currentRequest !== request.current) return;
       setErrorMessage(
         error instanceof Error ? error.message : "Unable to load the sale."
       );
     } finally {
-      setLoading(false);
+      if (currentRequest === request.current) setLoading(false);
     }
-  }
+  }, [saleId, organization, historyBranch, switchingContext, accessLoading]);
 
   useEffect(() => {
+    setReceiptOpen(false);
+    setReturnOpen(false);
     void loadSale();
-  }, [saleId, organization, branch, switchingContext, accessLoading]);
+    return () => { request.current += 1; };
+  }, [loadSale]);
 
   async function handleReturnCompleted() {
     await loadSale();
@@ -416,11 +428,12 @@ export default function SaleDetailsPage() {
       <ReceiptDialog
         open={receiptOpen}
         saleId={sale.id}
+        historyBranchId={historyBranch?.id}
         onClose={() => setReceiptOpen(false)}
       />
 
       <ReturnItemsDialog
-        open={returnOpen}
+        open={returnOpen && canRefund}
         sale={sale}
         onClose={() => setReturnOpen(false)}
         onReturnCompleted={handleReturnCompleted}

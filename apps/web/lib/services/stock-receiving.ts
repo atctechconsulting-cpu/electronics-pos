@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase/client";
+import { assertValidImei } from "@/lib/validations/imei";
 
 type ReceiveStockInput = {
   organization_id: string;
@@ -26,6 +27,8 @@ export async function receiveStock(input: ReceiveStockInput) {
 
     imei: input.requires_imei ? value : null,
   }));
+
+  identifiers.forEach(identifier => assertValidImei(identifier.imei));
 
   const { data, error } = await supabase.rpc("receive_stock", {
     p_organization_id: input.organization_id,

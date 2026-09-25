@@ -9,22 +9,27 @@ type ReceiptDialogProps = {
   open: boolean;
   saleId: string | null;
   onClose: () => void;
+  historyBranchId?: string;
 };
 
-export function ReceiptDialog({ open, saleId, onClose }: ReceiptDialogProps) {
-  const { organization, branch, switchingContext, accessLoading } = useAuth();
+export function ReceiptDialog({ open, saleId, onClose, historyBranchId }: ReceiptDialogProps) {
+  const { organization, branch, historicalBranches, historicalReadPermissions, switchingContext, accessLoading } = useAuth();
+  const receiptBranch = historyBranchId === undefined ? branch : historicalBranches.find(item =>
+    item.id === historyBranchId && item.organization_id === organization?.id &&
+    historicalReadPermissions[item.id]?.includes("sales.view"));
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const receiptRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     async function loadReceipt() {
       if (
         !open ||
         !saleId ||
         !organization ||
-        !branch ||
+        !receiptBranch ||
         switchingContext ||
         accessLoading
       ) {
@@ -43,21 +48,23 @@ export function ReceiptDialog({ open, saleId, onClose }: ReceiptDialogProps) {
       try {
         const data = await getReceipt(saleId, {
           organizationId: organization.id,
-          branchId: branch.id,
+          branchId: receiptBranch.id,
         });
 
-        setReceipt(data);
+        if (!cancelled) setReceipt(data);
       } catch (error: unknown) {
+        if (cancelled) return;
         setErrorMessage(
           error instanceof Error ? error.message : "Unable to load the receipt."
         );
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
 
     void loadReceipt();
-  }, [open, saleId, organization, branch, switchingContext, accessLoading]);
+    return () => { cancelled = true; };
+  }, [open, saleId, organization, receiptBranch, switchingContext, accessLoading]);
 
   function handlePrint() {
     if (!receiptRef.current || !receipt) return;

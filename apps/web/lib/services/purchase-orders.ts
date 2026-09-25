@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase/client";
+import { assertValidImei } from "@/lib/validations/imei";
 
 export type WorkspaceScope = {
   organizationId: string;
@@ -209,6 +210,10 @@ export async function receivePurchaseOrderGoods(
 
   if (!items.length) {
     throw new Error("Please select at least one product to receive.");
+  }
+
+  for (const item of items) {
+    for (const identifier of item.identifiers ?? []) assertValidImei(identifier.imei);
   }
 
   const { data, error } = await supabase.rpc("receive_purchase_order_goods", {

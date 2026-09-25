@@ -2,6 +2,7 @@
 
 import { supabase } from "@/lib/supabase/client";
 import { User } from "@supabase/supabase-js";
+import { operationalBranches, selectOperationalBranch, type WorkspaceBranch } from "@/lib/workspace-branches";
 import {
   createContext,
   ReactNode,
@@ -28,14 +29,7 @@ export type Organization = {
   is_default: boolean;
 };
 
-export type Branch = {
-  id: string;
-  organization_id: string;
-  name: string;
-  code: string | null;
-  is_head_office: boolean;
-  is_default: boolean;
-};
+export type Branch = WorkspaceBranch;
 
 type EffectiveAccessResponse = {
   organization_id: string;
@@ -54,6 +48,8 @@ type AuthContextValue = {
 
   branch: Branch | null;
   branches: Branch[];
+  historicalBranches: Branch[];
+  historicalReadPermissions: Record<string, string[]>;
 
   roles: string[];
   permissions: string[];
@@ -123,6 +119,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [organization, setOrganization] = useState<Organization | null>(null);
 
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [historicalBranches, setHistoricalBranches] = useState<Branch[]>([]);
+  const [historicalReadPermissions, setHistoricalReadPermissions] = useState<Record<string, string[]>>({});
   const [branch, setBranch] = useState<Branch | null>(null);
 
   const [roles, setRoles] = useState<string[]>([]);
@@ -140,6 +138,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setRoles([]);
     setPermissions([]);
     setIsSuperAdmin(false);
+    setHistoricalReadPermissions({});
   }, []);
 
   const loadEffectiveAccess = useCallback(
@@ -206,7 +205,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             organization_id,
             name,
             code,
-            is_head_office
+            is_head_office,
+            is_active
           )
         `
         )
@@ -218,7 +218,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw new Error(error.message);
       }
 
-      const availableBranches: Branch[] = (data ?? [])
+      const assignedBranches: Branch[] = (data ?? [])
         .map((link: any) => {
           const linkedBranch = link.branches;
 
@@ -230,6 +230,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             name: linkedBranch.name,
             code: linkedBranch.code,
             is_head_office: Boolean(linkedBranch.is_head_office),
+            is_active: linkedBranch.is_active === true,
             is_default: Boolean(link.is_default),
           } satisfies Branch;
         })
@@ -249,26 +250,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return a.name.localeCompare(b.name);
         });
 
+      const availableBranches = operationalBranches(assignedBranches, organizationId);
+      // Separate read-filter permissions never become operational permissions.
+      // Each answer is scoped by the existing RPC to this organisation + branch.
+      const readAccess = await Promise.all(assignedBranches.map(async candidate => {
+        const { data, error } = await supabase.rpc("get_effective_access", {
+          target_organization_id: organizationId, target_branch_id: candidate.id,
+        });
+        const allowed = !error && Array.isArray(data?.permissions)
+          ? data.permissions.filter((key: string) => key === "sales.view" || key === "reports.view") : [];
+        return [candidate.id, allowed] as const;
+      }));
+      if (requestId !== contextRequest.current) return null;
+      setHistoricalReadPermissions(Object.fromEntries(readAccess));
+      setHistoricalBranches(assignedBranches);
       setBranches(availableBranches);
 
       const storedBranchId = getStoredBranchId(userId, organizationId);
 
-      const selectedBranch =
-        availableBranches.find(
-          (candidate) => candidate.id === preferredBranchId
-        ) ??
-        availableBranches.find(
-          (candidate) => candidate.id === storedBranchId
-        ) ??
-        availableBranches.find((candidate) => candidate.is_default) ??
-        availableBranches.find((candidate) => candidate.is_head_office) ??
-        availableBranches[0] ??
-        null;
+      const selectedBranch = selectOperationalBranch(availableBranches, organizationId, preferredBranchId, storedBranchId);
 
       setBranch(selectedBranch);
 
       if (selectedBranch) {
         setStoredBranchId(userId, organizationId, selectedBranch.id);
+      } else if (typeof window !== "undefined") {
+        window.localStorage.removeItem(`alphapos:selected-branch:${userId}:${organizationId}`);
       }
 
       return selectedBranch;
@@ -287,6 +294,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setOrganizations([]);
     setOrganization(null);
     setBranches([]);
+    setHistoricalBranches([]);
     setBranch(null);
     clearEffectiveAccess();
 
@@ -302,6 +310,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setOrganizations([]);
         setOrganization(null);
         setBranches([]);
+        setHistoricalBranches([]);
         setBranch(null);
         clearEffectiveAccess();
         return;
@@ -379,6 +388,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (!selectedOrganization) {
         setBranches([]);
+        setHistoricalBranches([]);
         setBranch(null);
         clearEffectiveAccess();
         return;
@@ -407,6 +417,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setOrganizations([]);
       setOrganization(null);
       setBranches([]);
+      setHistoricalBranches([]);
       setBranch(null);
       clearEffectiveAccess();
     } finally {
@@ -465,6 +476,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setStoredOrganizationId(user.id, nextOrganization.id);
 
       setBranches([]);
+      setHistoricalBranches([]);
       setBranch(null);
 
       const selectedBranch = await loadBranchesForOrganization(
@@ -503,19 +515,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error("You do not have access to the selected branch.");
     }
 
-    if (branch?.id === nextBranch.id) {
-      return;
-    }
-
     const requestId = ++contextRequest.current;
     setSwitchingContext(true);
     clearEffectiveAccess();
 
     try {
-      setBranch(nextBranch);
-      setStoredBranchId(user.id, organization.id, nextBranch.id);
-
-      await loadEffectiveAccess(organization.id, nextBranch.id, requestId);
+      // Re-read assignments/status so cached choices cannot select a closed branch.
+      const selectedBranch = await loadBranchesForOrganization(user.id, organization.id, requestId, nextBranch.id);
+      if (requestId !== contextRequest.current) return;
+      await loadEffectiveAccess(organization.id, selectedBranch?.id ?? null, requestId);
     } catch (error) {
       if (requestId !== contextRequest.current) return;
       console.error("Unable to switch branch:", error);
@@ -546,6 +554,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setOrganizations([]);
     setOrganization(null);
     setBranches([]);
+    setHistoricalBranches([]);
     setBranch(null);
     await supabase.auth.signOut();
   }
@@ -561,6 +570,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         branch,
         branches,
+        historicalBranches,
+        historicalReadPermissions,
 
         roles,
         permissions,

@@ -142,6 +142,12 @@ const navigation: NavigationSection[] = [
     title: "Administration",
     items: [
       {
+        href: "/branches",
+        label: "Branches",
+        icon: Building2,
+        permission: "branches.view",
+      },
+      {
         href: "/staff",
         label: "Staff",
         icon: UserCog,
@@ -171,6 +177,7 @@ export function AppSidebar() {
     organization,
     roles,
     hasPermission,
+    historicalReadPermissions,
     loading,
     accessLoading,
     switchingContext,
@@ -187,7 +194,9 @@ export function AppSidebar() {
   const visibleNavigation = navigation
     .map((section) => ({
       ...section,
-      items: section.items.filter((item) => hasPermission(item.permission)),
+      items: section.items.filter((item) => hasPermission(item.permission) ||
+        ((item.href === "/sales" || item.href === "/reports") &&
+          Object.values(historicalReadPermissions).some(keys => keys.includes(item.permission)))),
     }))
     .filter((section) => section.items.length > 0);
 

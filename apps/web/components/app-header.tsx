@@ -20,6 +20,7 @@ export function AppHeader() {
     switchingContext,
     switchOrganization,
     switchBranch,
+    refreshAuthContext,
     signOut,
   } = useAuth();
 
@@ -195,7 +196,7 @@ export function AppHeader() {
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium text-slate-900">
                 {branch?.name ??
-                  (switchingContext ? "Switching..." : "No branch assigned")}
+                  (switchingContext ? "Switching..." : "No active branch assigned")}
               </p>
 
               <p className="truncate text-xs text-slate-500">
@@ -275,7 +276,7 @@ export function AppHeader() {
                       disabled={switchingContext || branches.length <= 1}
                       className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 disabled:bg-slate-50 disabled:text-slate-500"
                     >
-                      {!branch && <option value="">No branch assigned</option>}
+                      {!branch && <option value="">No active branch assigned</option>}
 
                       {branches.map((item) => (
                         <option key={item.id} value={item.id}>
@@ -287,6 +288,8 @@ export function AppHeader() {
                   </div>
 
                   <div className="rounded-lg bg-slate-50 px-3 py-3">
+                    <button type="button" className="mb-3 text-xs font-medium underline" disabled={switchingContext}
+                      onClick={() => { closeSearch(); void refreshAuthContext(); }}>Refresh workspace access</button>
                     <div className="flex items-start gap-2">
                       <Store className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" />
 

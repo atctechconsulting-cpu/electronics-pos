@@ -6,6 +6,7 @@ import { useAuth } from "@/components/auth-provider";
 import { receiveStock } from "@/lib/services/stock-receiving";
 import { getInventoryProducts } from "@/lib/services/inventory-lookups";
 import { getSupplierOptions } from "@/lib/services/lookups";
+import { IMEI_ERROR, isValidImei } from "@/lib/validations/imei";
 
 export function ReceiveStockDialog({ onSuccess }: { onSuccess: () => void }) {
   const { organization, branch } = useAuth();
@@ -79,18 +80,30 @@ export function ReceiveStockDialog({ onSuccess }: { onSuccess: () => void }) {
       }
     }
 
-    await receiveStock({
-      organization_id: organization.id,
-      branch_id: branch.id,
-      product_id: form.product_id,
-      quantity: Number(form.quantity),
-      unit_cost: Number(form.unit_cost),
-      reference: form.reference,
-      notes: form.notes,
-      serial_numbers: form.serial_numbers,
-      requires_imei: Boolean(selectedProduct?.requires_imei),
-      is_serialized: Boolean(selectedProduct?.is_serialized),
-    });
+    if (selectedProduct?.requires_imei && form.serial_numbers.some(value => !isValidImei(value.trim()))) {
+      alert(IMEI_ERROR);
+      setLoading(false);
+      return;
+    }
+
+    try {
+      await receiveStock({
+        organization_id: organization.id,
+        branch_id: branch.id,
+        product_id: form.product_id,
+        quantity: Number(form.quantity),
+        unit_cost: Number(form.unit_cost),
+        reference: form.reference,
+        notes: form.notes,
+        serial_numbers: form.serial_numbers,
+        requires_imei: Boolean(selectedProduct?.requires_imei),
+        is_serialized: Boolean(selectedProduct?.is_serialized),
+      });
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Unable to receive stock. Check the supplied identifiers.");
+      setLoading(false);
+      return;
+    }
 
     setLoading(false);
     setOpen(false);
