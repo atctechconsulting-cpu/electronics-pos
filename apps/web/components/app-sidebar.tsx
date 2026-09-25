@@ -124,6 +124,7 @@ const navigation: NavigationSection[] = [
   {
     title: "Operations",
     items: [
+      { href: "/warranty", label: "Warranty", icon: BadgeCheck, permission: "warranty.view" },
       {
         href: "/repairs",
         label: "Repairs",
@@ -195,7 +196,7 @@ export function AppSidebar() {
     .map((section) => ({
       ...section,
       items: section.items.filter((item) => hasPermission(item.permission) ||
-        ((item.href === "/sales" || item.href === "/reports") &&
+        ((item.href === "/sales" || item.href === "/reports" || item.href === "/warranty") &&
           Object.values(historicalReadPermissions).some(keys => keys.includes(item.permission)))),
     }))
     .filter((section) => section.items.length > 0);

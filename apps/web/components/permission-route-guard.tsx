@@ -17,6 +17,8 @@ type RoutePermission = {
 };
 
 const protectedRoutes: RoutePermission[] = [
+  { path: "/warranty/new", permission: "warranty.manage" },
+  { path: "/warranty", permission: "warranty.view" },
   { path: "/branches", permission: "branches.view" },
   {
     path: "/dashboard",
@@ -125,7 +127,7 @@ export function PermissionRouteGuard({ children }: PermissionRouteGuardProps) {
   }
 
   const historicalReadAllowed = requiredRoute &&
-    (requiredRoute.path === "/sales" || requiredRoute.path === "/reports") &&
+    (requiredRoute.path === "/sales" || requiredRoute.path === "/reports" || requiredRoute.path === "/warranty") &&
     Object.values(historicalReadPermissions).some(keys => keys.includes(requiredRoute.permission));
 
   if (!requiredRoute || hasPermission(requiredRoute.permission) || historicalReadAllowed) {

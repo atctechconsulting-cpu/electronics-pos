@@ -258,7 +258,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           target_organization_id: organizationId, target_branch_id: candidate.id,
         });
         const allowed = !error && Array.isArray(data?.permissions)
-          ? data.permissions.filter((key: string) => key === "sales.view" || key === "reports.view") : [];
+          ? data.permissions.filter((key: string) => key === "sales.view" || key === "reports.view" || key === "warranty.view") : [];
         return [candidate.id, allowed] as const;
       }));
       if (requestId !== contextRequest.current) return null;
