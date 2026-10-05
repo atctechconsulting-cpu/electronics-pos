@@ -132,17 +132,18 @@ test('both receiving services reject malformed IMEIs before RPC and allow ordina
   const calls = [];
   const mocks = {
     '@/lib/validations/imei': imeiValidation,
+    '@/lib/services/receiving-errors': load('lib/services/receiving-errors.ts'),
     '@/lib/supabase/client': { supabase: { rpc: async (name, args) => { calls.push({ name, args }); return { data: {}, error: null }; } } },
   };
   const stock = load('lib/services/stock-receiving.ts', mocks);
   const purchase = load('lib/services/purchase-orders.ts', mocks);
   for (const imei of ['12345678901234', '1234567890123456', 'y6uu6rtu8']) {
-    await assert.rejects(stock.receiveStock({ requires_imei: true, serial_numbers: [imei] }), /exactly 15 digits/);
+    await assert.rejects(stock.receiveStock({ quantity: 1, reference: 'UAT', requires_imei: true, serial_numbers: [imei] }), /exactly 15 digits/);
     await assert.rejects(purchase.receivePurchaseOrderGoods(uuid('1'), [{ quantity: 1, identifiers: [{ imei }] }]), /exactly 15 digits/);
   }
   assert.equal(calls.length, 0);
-  await stock.receiveStock({ requires_imei: true, serial_numbers: ['012345678901234'] });
-  await stock.receiveStock({ is_serialized: true, serial_numbers: ['SN-short'] });
+  await stock.receiveStock({ quantity: 1, reference: 'UAT', requires_imei: true, serial_numbers: ['012345678901234'] });
+  await stock.receiveStock({ quantity: 1, reference: 'UAT', is_serialized: true, serial_numbers: ['SN-short'] });
   await purchase.receivePurchaseOrderGoods(uuid('1'), [{ quantity: 1, identifiers: [{ imei: '012345678901234' }, { serial_number: 'SN-short' }] }]);
   assert.equal(calls[0].args.p_identifiers[0].imei, '012345678901234');
   assert.equal(calls[1].args.p_identifiers[0].serial_number, 'SN-short');

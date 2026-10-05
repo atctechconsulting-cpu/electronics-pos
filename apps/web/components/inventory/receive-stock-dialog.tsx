@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { AppDialog, AppDialogFooter, AppDialogCancelButton } from "@/components/ui/app-dialog";
 import { Package } from "lucide-react";
 import { useAuth } from "@/components/auth-provider";
 import { receiveStock } from "@/lib/services/stock-receiving";
@@ -131,17 +132,24 @@ export function ReceiveStockDialog({ onSuccess }: { onSuccess: () => void }) {
         Receive Stock
       </button>
 
-      {open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="w-full max-w-xl rounded-xl bg-white p-6 shadow-xl">
-            <h2 className="text-xl font-semibold text-slate-900">
-              Receive Stock
-            </h2>
-            <p className="mt-1 text-sm text-slate-500">
-              Add newly received items into inventory for this branch.
-            </p>
-
-            <form onSubmit={handleSubmit} className="mt-6 space-y-5">
+      <AppDialog
+        open={open}
+        title="Receive Stock"
+        description="Add newly received items into inventory for this branch."
+        onClose={() => setOpen(false)}
+        closeDisabled={loading}
+        maxWidth="xl"
+        footer={
+          <AppDialogFooter>
+            <AppDialogCancelButton onClick={() => setOpen(false)} disabled={loading} />
+            <button type="submit" form="receive-stock-form" disabled={loading}
+              className="rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-60">
+              {loading ? "Receiving..." : "Receive Stock"}
+            </button>
+          </AppDialogFooter>
+        }
+      >
+            <form id="receive-stock-form" onSubmit={handleSubmit} className="space-y-5">
               <div>
                 <label className="text-sm font-medium text-slate-700">
                   Supplier
@@ -155,6 +163,7 @@ export function ReceiveStockDialog({ onSuccess }: { onSuccess: () => void }) {
                       ...form,
                       supplier_id: e.target.value,
                       product_id: "",
+                      serial_numbers: [],
                     })
                   }
                 >
@@ -175,7 +184,7 @@ export function ReceiveStockDialog({ onSuccess }: { onSuccess: () => void }) {
                   className="mt-1 w-full rounded-lg border px-3 py-2"
                   value={form.product_id}
                   onChange={(e) =>
-                    setForm({ ...form, product_id: e.target.value })
+                    setForm({ ...form, product_id: e.target.value, serial_numbers: [] })
                   }
                   required
                 >
@@ -234,7 +243,7 @@ export function ReceiveStockDialog({ onSuccess }: { onSuccess: () => void }) {
 
               <div>
                 <label className="text-sm font-medium text-slate-700">
-                  Invoice / Reference number
+                  Invoice / Reference number (required)
                 </label>
                 <input
                   className="mt-1 w-full rounded-lg border px-3 py-2"
@@ -243,6 +252,7 @@ export function ReceiveStockDialog({ onSuccess }: { onSuccess: () => void }) {
                     setForm({ ...form, reference: e.target.value })
                   }
                   placeholder="e.g. INV-1001"
+                  required
                 />
               </div>
 
@@ -305,26 +315,8 @@ export function ReceiveStockDialog({ onSuccess }: { onSuccess: () => void }) {
                 </p>
               </div>
 
-              <div className="flex justify-end gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setOpen(false)}
-                  className="rounded-lg border px-4 py-2 text-sm font-medium"
-                >
-                  Cancel
-                </button>
-
-                <button
-                  disabled={loading}
-                  className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-                >
-                  {loading ? "Receiving..." : "Receive Stock"}
-                </button>
-              </div>
             </form>
-          </div>
-        </div>
-      )}
+      </AppDialog>
     </>
   );
 }

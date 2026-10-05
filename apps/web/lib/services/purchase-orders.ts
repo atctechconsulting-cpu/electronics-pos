@@ -1,5 +1,6 @@
 import { supabase } from "@/lib/supabase/client";
 import { assertValidImei } from "@/lib/validations/imei";
+import { receivingError } from "@/lib/services/receiving-errors";
 
 export type WorkspaceScope = {
   organizationId: string;
@@ -216,16 +217,14 @@ export async function receivePurchaseOrderGoods(
     for (const identifier of item.identifiers ?? []) assertValidImei(identifier.imei);
   }
 
-  const { data, error } = await supabase.rpc("receive_purchase_order_goods", {
+  const { data, error } = await Promise.resolve(supabase.rpc("receive_purchase_order_goods", {
     p_purchase_order_id: purchaseOrderId,
     p_items: items,
     p_notes: notes?.trim() || null,
-  });
+  })).catch(error => { throw receivingError(error); });
 
   if (error) {
-    throw new Error(
-      error.message || "Unable to receive the purchase order goods."
-    );
+    throw receivingError(error);
   }
 
   if (!data) {
