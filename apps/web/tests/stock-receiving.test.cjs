@@ -14,7 +14,7 @@ function load(file, mocks = {}) {
     module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX,
   } }).outputText;
   const module = { exports: {} };
-  vm.runInNewContext(code, { module, exports: module.exports, require: name => {
+  vm.runInNewContext(code, { module, exports: module.exports, alert: mocks.alert ?? (() => {}), require: name => {
     if (Object.hasOwn(mocks, name)) return mocks[name];
     if (name.startsWith('@/')) return load(name.slice(2) + '.ts', mocks);
     return require(name);
@@ -128,7 +128,7 @@ test('dialog product/supplier changes clear identifiers and reference uses nativ
   let index = 0;
   let changed;
   const mocks = {
-    react: { ...React, useEffect: () => {}, useState: () => { const i = index++; return [states[i], value => { if (i === 4) changed = value; }]; } },
+    react: { ...React, useRef: () => ({ current: null }), useEffect: () => {}, useState: () => { const i = index++; return [states[i], value => { if (i === 4) changed = value; }]; } },
     '@/components/auth-provider': { useAuth: () => ({ organization: { id: 'org' }, branch: { id: 'branch' } }) },
     '@/lib/services/stock-receiving': { receiveStock: () => {} },
     '@/lib/services/inventory-lookups': {}, '@/lib/services/lookups': {},
@@ -150,4 +150,145 @@ test('dialog product/supplier changes clear identifiers and reference uses nativ
   assert.match(markup, /max-h-\[92vh\]/);
   assert.match(markup, /min-h-0 flex-1 overflow-y-auto/);
   assert.match(markup, /shrink-0 border-t/);
+});
+
+const receivingValidation = load('lib/validations/receiving-identifiers.ts');
+const { splitReceivingIdentifiers, validateReceivingIdentifiers } = receivingValidation;
+const plain = value => JSON.parse(JSON.stringify(value));
+test('bulk parsing supports Unix, Windows and Excel column line endings without changing values', () => {
+  for (const separator of ['\n', '\r\n', '\r']) {
+    const raw = splitReceivingIdentifiers(` ${imei} ${separator}012345678901234${separator}`);
+    const result = validateReceivingIdentifiers(raw, 2, true);
+    assert.equal(result.valid, true);
+    assert.deepEqual(plain(result.values), [imei, '012345678901234']);
+    assert.equal(raw[0], ` ${imei} `);
+    assert.equal(raw.at(-1), '');
+  }
+});
+test('only trailing blanks are ignored; leading and interior blanks preserve one-based errors', () => {
+  const raw = ['', imei, '  ', '012345678901234', '', '   '];
+  const result = validateReceivingIdentifiers(raw, 2, true);
+  assert.equal(result.valid, false);
+  assert.equal(result.entered, 2);
+  assert.equal(result.invalidCount, 2);
+  assert.deepEqual(plain(result.errors.map(error => error.line)), [1, 3]);
+  assert.equal(result.values.length, 4);
+  assert.equal(raw.length, 6);
+  assert.equal(validateReceivingIdentifiers([imei, '', ' '], 1, true).valid, true);
+});
+test('malformed pasted IMEIs are rejected, never padded, shortened or converted', () => {
+  for (const value of ['123', '1234567890987650', '1.23457E+14', '12345678909876X', '123456789098765\t012345678901234']) {
+    const result = validateReceivingIdentifiers([value], 1, true);
+    assert.equal(result.valid, false);
+    assert.equal(result.values[0], value);
+    assert.equal(result.errors[0].line, 1);
+  }
+});
+test('serial validation retains case, rejects blanks and reports exact duplicate line references', () => {
+  assert.equal(validateReceivingIdentifiers([' SN-AbC ', 'sn-abc'], 2, false).valid, true);
+  assert.equal(validateReceivingIdentifiers(['  '], 1, false).valid, false);
+  const result = validateReceivingIdentifiers(['SN-AbC', '', ' SN-AbC ', 'SN-AbC'], 3, false);
+  assert.equal(result.duplicateCount, 2);
+  assert.equal(result.invalidCount, 1);
+  assert.deepEqual(plain(result.errors.filter(error => error.kind === 'duplicate').map(error => [error.line, error.originalLine])), [[3, 1], [4, 1]]);
+  assert.equal(result.valid, false);
+});
+test('exact positive integer quantity required; 50 and 100 identifier receipts validate', () => {
+  for (const quantity of [0, -1, 1.5, NaN, Infinity, 2]) assert.equal(validateReceivingIdentifiers([imei], quantity, true).valid, false);
+  for (const count of [50, 100]) {
+    const values = Array.from({ length: count }, (_, index) => String(100000000000000 + index));
+    const result = validateReceivingIdentifiers(splitReceivingIdentifiers(values.join('\r\n') + '\r\n'), count, true);
+    assert.equal(result.valid, true);
+    assert.equal(result.entered, count);
+    assert.equal(result.duplicateCount, 0);
+    assert.equal(validateReceivingIdentifiers(values, count - 1, true).valid, false);
+  }
+});
+function receivingUi({ values = [imei], quantity = 1, tracked = true } = {}) {
+  const states = [true, [{ id: 'product', requires_imei: tracked, is_serialized: tracked }], [], false,
+    { supplier_id: '', product_id: 'product', quantity, unit_cost: 10, reference: 'UAT', notes: '', serial_numbers: values }, 'individual'];
+  const refs = []; const effectDeps = []; let cursor = 0, refIndex = 0, effectIndex = 0; let pending = [];
+  const calls = []; const alerts = []; let focusCount = 0;
+  const mocks = {
+    alert: message => alerts.push(message),
+    react: { ...React,
+      useState: initial => { const index = cursor++; if (!(index in states)) states[index] = initial;
+        return [states[index], value => { states[index] = typeof value === 'function' ? value(states[index]) : value; }]; },
+      useRef: initial => { const index = refIndex++; return refs[index] ??= { current: initial }; },
+      useEffect: (effect, deps) => { const index = effectIndex++; const previous = effectDeps[index];
+        if (!previous || deps.some((value, i) => !Object.is(previous[i], value))) { pending.push(effect); effectDeps[index] = deps; } },
+    },
+    '@/components/auth-provider': { useAuth: () => ({ organization: organizationMock, branch: branchMock }) },
+    '@/lib/services/stock-receiving': { receiveStock: async input => calls.push(input) },
+    '@/lib/services/inventory-lookups': { getInventoryProducts: async () => states[1] },
+    '@/lib/services/lookups': { getSupplierOptions: async () => [] },
+    '@/components/ui/app-dialog': load('components/ui/app-dialog.tsx'),
+  };
+  const organizationMock = { id: 'org' }, branchMock = { id: 'branch' };
+  const { ReceiveStockDialog } = load('components/inventory/receive-stock-dialog.tsx', mocks);
+  function render() {
+    cursor = 0; refIndex = 0; effectIndex = 0; pending = [];
+    const tree = ReceiveStockDialog({ onSuccess: () => {} });
+    const all = nodes(tree);
+    const textarea = all.find(node => node.props?.id === 'receiving-bulk-identifiers');
+    if (textarea) textarea.props.ref.current = { focus: () => focusCount++ };
+    for (const effect of pending) effect();
+    return { tree, all, textarea,
+      toggle: mode => all.find(node => node.type === 'button' && node.props.children === (mode === 'bulk' ? 'Bulk & Scanner' : 'Individual')).props.onClick(),
+      submit: () => all.find(node => node.type === 'form').props.onSubmit({ preventDefault() {} }),
+      disabled: nodes(all.find(node => node.props?.title === 'Receive Stock').props.footer).find(node => node.props?.type === 'submit').props.disabled,
+    };
+  }
+  return { render, states, calls, alerts, focusCount: () => focusCount };
+}
+test('Individual -> Bulk -> Individual is lossless and bulk typing does not steal focus', () => {
+  const ui = receivingUi({ values: [` ${imei} `, '012345678901234'], quantity: 2 });
+  ui.render().toggle('bulk');
+  let view = ui.render();
+  assert.equal(view.textarea.props.value, ` ${imei} \n012345678901234`);
+  assert.equal(ui.focusCount(), 1);
+  view.textarea.props.onChange({ target: { value: `${imei}\n012345678901234\n` } });
+  view = ui.render(); assert.equal(ui.focusCount(), 1);
+  assert.equal(view.textarea.props.value, `${imei}\n012345678901234\n`);
+  view.toggle('individual'); view = ui.render();
+  assert.equal(view.all.find(node => node.props?.id === 'receiving-identifier-0').props.value, imei);
+  assert.equal(view.all.find(node => node.props?.id === 'receiving-identifier-1').props.value, '012345678901234');
+  view.toggle('bulk'); view = ui.render();
+  assert.equal(view.textarea.props.value, `${imei}\n012345678901234\n`);
+  assert.equal(ui.focusCount(), 2);
+});
+test('quantity increase and decrease preserve values, expose excess and block until explicit removal', () => {
+  const ui = receivingUi({ values: [imei, '012345678901234'], quantity: 2 });
+  const quantityInput = view => view.all.find(node => node.type === 'input' && node.props.min === '1');
+  quantityInput(ui.render()).props.onChange({ target: { value: '3' } });
+  let view = ui.render(); assert.equal(ui.states[4].serial_numbers.length, 2); assert.equal(view.disabled, true);
+  quantityInput(view).props.onChange({ target: { value: '1' } });
+  view = ui.render(); assert.equal(ui.states[4].serial_numbers.length, 2); assert.equal(view.disabled, true);
+  assert.equal(view.all.find(node => node.props?.id === 'receiving-identifier-1').props.value, '012345678901234');
+  view.all.find(node => node.props?.['aria-label'] === 'Remove identifier 2').props.onClick();
+  view = ui.render(); assert.equal(view.disabled, false); assert.equal(ui.states[4].serial_numbers[0], imei);
+});
+test('scanner Enter remains native newline and submits only on explicit form submission', async () => {
+  const ui = receivingUi({ values: [], quantity: 2 });
+  ui.render().toggle('bulk');
+  let view = ui.render();
+  assert.equal(view.textarea.props.onKeyDown, undefined);
+  view.textarea.props.onChange({ target: { value: `${imei}\n` } });
+  view = ui.render(); assert.equal(view.disabled, true); assert.equal(ui.calls.length, 0);
+  view.textarea.props.onChange({ target: { value: `${imei}\n012345678901234\n` } });
+  view = ui.render(); assert.equal(view.disabled, false); assert.equal(ui.calls.length, 0);
+  await view.submit();
+  assert.deepEqual(plain(ui.calls[0].serial_numbers), [imei, '012345678901234']);
+  assert.equal(ui.calls[0].organization_id, 'org'); assert.equal(ui.calls[0].branch_id, 'branch');
+});
+test('invalid or duplicate draft blocks even a direct submit; ordinary products have no toggle', async () => {
+  for (const values of [[imei, imei], ['', imei], ['bad', imei], [imei]]) {
+    const ui = receivingUi({ values, quantity: 2 });
+    const view = ui.render(); assert.equal(view.disabled, true);
+    await view.submit(); assert.equal(ui.calls.length, 0); assert.equal(ui.alerts.length, 1);
+  }
+  const ui = receivingUi({ values: [], quantity: 2, tracked: false });
+  const view = ui.render(); assert.equal(view.disabled, false);
+  assert.equal(view.all.some(node => node.props?.['aria-label'] === 'Identifier entry mode'), false);
+  await view.submit(); assert.equal(ui.calls.length, 1); assert.equal(ui.calls[0].serial_numbers.length, 0);
 });

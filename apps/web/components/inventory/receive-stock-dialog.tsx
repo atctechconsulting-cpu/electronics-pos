@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AppDialog, AppDialogFooter, AppDialogCancelButton } from "@/components/ui/app-dialog";
 import { Package } from "lucide-react";
 import { useAuth } from "@/components/auth-provider";
 import { receiveStock } from "@/lib/services/stock-receiving";
 import { getInventoryProducts } from "@/lib/services/inventory-lookups";
 import { getSupplierOptions } from "@/lib/services/lookups";
-import { IMEI_ERROR, isValidImei } from "@/lib/validations/imei";
+import { splitReceivingIdentifiers, validateReceivingIdentifiers } from "@/lib/validations/receiving-identifiers";
 
 export function ReceiveStockDialog({ onSuccess }: { onSuccess: () => void }) {
   const { organization, branch } = useAuth();
@@ -26,6 +26,9 @@ export function ReceiveStockDialog({ onSuccess }: { onSuccess: () => void }) {
     notes: "",
     serial_numbers: [] as string[],
   });
+
+  const [identifierMode, setIdentifierMode] = useState<"individual" | "bulk">("individual");
+  const bulkRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     async function loadData() {
@@ -59,33 +62,28 @@ export function ReceiveStockDialog({ onSuccess }: { onSuccess: () => void }) {
 
   const serialLabel = selectedProduct?.requires_imei ? "IMEI" : "Serial Number";
 
+  const identifierValidation = validateReceivingIdentifiers(form.serial_numbers, form.quantity, Boolean(selectedProduct?.requires_imei));
+  const expectedInputs = Number.isInteger(form.quantity) && form.quantity > 0 ? form.quantity : 0;
   const serialInputs = Array.from(
-    { length: Number(form.quantity || 0) },
-    (_, index) => index
+    { length: Math.max(expectedInputs, identifierValidation.values.length) }, (_, index) => index
   );
+
+  useEffect(() => {
+    if (open && identifierMode === "bulk" && needsSerialInputs) bulkRef.current?.focus();
+  }, [open, identifierMode, needsSerialInputs]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
     if (!organization || !branch) return;
 
-    setLoading(true);
-
-    if (needsSerialInputs) {
-      const completedSerials = form.serial_numbers.filter(Boolean);
-
-      if (completedSerials.length !== Number(form.quantity)) {
-        alert(`Please enter ${Number(form.quantity)} ${serialLabel} values.`);
-        setLoading(false);
-        return;
-      }
-    }
-
-    if (selectedProduct?.requires_imei && form.serial_numbers.some(value => !isValidImei(value.trim()))) {
-      alert(IMEI_ERROR);
-      setLoading(false);
+    if (loading) return;
+    const validation = validateReceivingIdentifiers(form.serial_numbers, form.quantity, Boolean(selectedProduct?.requires_imei));
+    if (needsSerialInputs && !validation.valid) {
+      alert(validation.errors[0]?.message ?? "Enter exactly one identifier for each unit received.");
       return;
     }
+    setLoading(true);
 
     try {
       await receiveStock({
@@ -96,7 +94,7 @@ export function ReceiveStockDialog({ onSuccess }: { onSuccess: () => void }) {
         unit_cost: Number(form.unit_cost),
         reference: form.reference,
         notes: form.notes,
-        serial_numbers: form.serial_numbers,
+        serial_numbers: needsSerialInputs ? validation.values : [],
         requires_imei: Boolean(selectedProduct?.requires_imei),
         is_serialized: Boolean(selectedProduct?.is_serialized),
       });
@@ -142,7 +140,7 @@ export function ReceiveStockDialog({ onSuccess }: { onSuccess: () => void }) {
         footer={
           <AppDialogFooter>
             <AppDialogCancelButton onClick={() => setOpen(false)} disabled={loading} />
-            <button type="submit" form="receive-stock-form" disabled={loading}
+            <button type="submit" form="receive-stock-form" disabled={loading || Boolean(needsSerialInputs && !identifierValidation.valid)}
               className="rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-60">
               {loading ? "Receiving..." : "Receive Stock"}
             </button>
@@ -213,10 +211,6 @@ export function ReceiveStockDialog({ onSuccess }: { onSuccess: () => void }) {
                       setForm({
                         ...form,
                         quantity,
-                        serial_numbers: Array.from(
-                          { length: quantity },
-                          (_, index) => form.serial_numbers[index] ?? ""
-                        ),
                       });
                     }}
                     required
@@ -279,29 +273,55 @@ export function ReceiveStockDialog({ onSuccess }: { onSuccess: () => void }) {
                     received.
                   </p>
 
-                  <div className="mt-4 grid gap-3 md:grid-cols-2">
-                    {serialInputs.map((index) => (
-                      <div key={index}>
-                        <label className="text-xs font-medium text-slate-600">
-                          {serialLabel} {index + 1}
-                        </label>
-                        <input
-                          className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
-                          value={form.serial_numbers[index] ?? ""}
-                          onChange={(e) => {
-                            const nextSerials = [...form.serial_numbers];
-                            nextSerials[index] = e.target.value;
-
-                            setForm({
-                              ...form,
-                              serial_numbers: nextSerials,
-                            });
-                          }}
-                          required
-                        />
-                      </div>
-                    ))}
+                  <div className="mt-3 flex gap-2" role="group" aria-label="Identifier entry mode">
+                    {(["individual", "bulk"] as const).map(mode => <button key={mode} type="button"
+                      aria-pressed={identifierMode === mode} disabled={loading}
+                      onClick={() => setIdentifierMode(mode)}
+                      className={"rounded-lg border px-3 py-2 text-sm " + (identifierMode === mode ? "bg-slate-900 text-white" : "bg-white text-slate-700")}>
+                      {mode === "individual" ? "Individual" : "Bulk & Scanner"}
+                    </button>)}
                   </div>
+                  <p id="receiving-identifier-summary" className="mt-3 text-sm font-medium" aria-live="polite">
+                    {identifierValidation.entered} / {form.quantity} entered · {identifierValidation.invalidCount} invalid · {identifierValidation.duplicateCount} duplicate{identifierValidation.duplicateCount === 1 ? "" : "s"}
+                  </p>
+                  {identifierValidation.entered !== form.quantity && <p className="mt-1 text-xs text-slate-600">
+                    Enter exactly {form.quantity} identifiers. Extra entries must be explicitly removed or the quantity increased.
+                  </p>}
+                  {identifierMode === "bulk" ? <div className="mt-3">
+                    <label htmlFor="receiving-bulk-identifiers" className="text-xs font-medium text-slate-600">One {serialLabel.toLowerCase()} per line</label>
+                    <textarea id="receiving-bulk-identifiers" ref={bulkRef} rows={8}
+                      className="mt-1 w-full rounded-lg border px-3 py-2 font-mono text-sm"
+                      value={form.serial_numbers.join("\n")}
+                      onChange={e => setForm({ ...form, serial_numbers: splitReceivingIdentifiers(e.target.value) })}
+                      aria-describedby="receiving-identifier-summary receiving-identifier-errors"
+                      aria-invalid={identifierValidation.errors.length > 0}
+                      spellCheck={false} autoCapitalize="none" autoCorrect="off" disabled={loading}
+                      placeholder="Scan devices or paste a column. Press Enter between identifiers." />
+                  </div> : <div className="mt-4 grid gap-3 md:grid-cols-2">
+                    {serialInputs.map(index => <div key={index}>
+                      <label htmlFor={"receiving-identifier-" + index} className="text-xs font-medium text-slate-600">
+                        {serialLabel} {index + 1}{index >= expectedInputs ? " (excess entry)" : ""}
+                      </label>
+                      <input id={"receiving-identifier-" + index}
+                        className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                        value={form.serial_numbers[index] ?? ""}
+                        onChange={e => {
+                          const next = Array.from({ length: Math.max(form.serial_numbers.length, index + 1) }, (_, i) => form.serial_numbers[i] ?? "");
+                          next[index] = e.target.value;
+                          setForm({ ...form, serial_numbers: next });
+                        }}
+                        aria-invalid={identifierValidation.errors.some(error => error.line === index + 1)}
+                        aria-describedby="receiving-identifier-errors" required={index < expectedInputs} disabled={loading} />
+                      {index >= expectedInputs && <button type="button" disabled={loading}
+                        className="mt-1 text-xs text-red-700" aria-label={"Remove identifier " + (index + 1)}
+                        onClick={() => setForm({ ...form, serial_numbers: form.serial_numbers.filter((_, i) => i !== index) })}>
+                        Remove excess entry
+                      </button>}
+                    </div>)}
+                  </div>}
+                  <ul id="receiving-identifier-errors" className="mt-3 space-y-1 text-xs text-red-700">
+                    {identifierValidation.errors.map(error => <li key={error.line + error.kind}>{error.message}</li>)}
+                  </ul>
                 </div>
               )}
 
