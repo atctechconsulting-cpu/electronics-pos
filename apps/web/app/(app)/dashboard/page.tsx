@@ -27,6 +27,7 @@ import {
   SectionCard,
   StatCard,
 } from "@/components/ui/alpha-components";
+import { formatGrossMargin } from "@/lib/reporting-presentation";
 import { BusinessReport, getBusinessReport } from "@/lib/services/reports";
 import { supabase } from "@/lib/supabase/client";
 
@@ -53,10 +54,6 @@ function today() {
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat("en-GB").format(Number(value || 0));
-}
-
-function formatPercent(value: number | null | undefined) {
-  return `${Number(value ?? 0).toFixed(1)}%`;
 }
 
 function getJoinedRecord<T>(value: unknown): T | null {
@@ -312,9 +309,7 @@ export default function DashboardPage() {
                 label="Today's Gross Profit"
                 value={<Currency amount={report.summary.gross_profit ?? 0} />}
                 icon={TrendingUp}
-                description={`${formatPercent(
-                  report.summary.gross_margin
-                )} gross margin`}
+                description={`${formatGrossMargin(report.summary.gross_margin, report.summary.net_sales)} gross margin`}
               />
             ) : (
               <StatCard
@@ -536,12 +531,12 @@ export default function DashboardPage() {
 
                           <span
                             className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                              Number(report.summary.gross_margin ?? 0) > 0
+                              report.summary.net_sales > 0 && Number(report.summary.gross_margin ?? 0) > 0
                                 ? "bg-emerald-50 text-emerald-700"
                                 : "bg-slate-100 text-slate-600"
                             }`}
                           >
-                            {formatPercent(report.summary.gross_margin)}
+                            {formatGrossMargin(report.summary.gross_margin, report.summary.net_sales)}
                           </span>
                         </div>
 
@@ -797,7 +792,7 @@ export default function DashboardPage() {
                               </td>
 
                               <td className="py-3 text-right font-medium text-slate-700">
-                                {formatPercent(product.gross_margin)}
+                                {formatGrossMargin(product.gross_margin, product.revenue)}
                               </td>
                             </>
                           ) : null}

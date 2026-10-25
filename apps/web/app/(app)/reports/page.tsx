@@ -27,6 +27,7 @@ import {
   SectionCard,
   StatCard,
 } from "@/components/ui/alpha-components";
+import { formatGrossMargin } from "@/lib/reporting-presentation";
 import { BusinessReport, getBusinessReport } from "@/lib/services/reports";
 
 type DatePreset = "TODAY" | "7_DAYS" | "30_DAYS" | "THIS_MONTH" | "CUSTOM";
@@ -89,10 +90,6 @@ function formatNumber(value: number) {
   return new Intl.NumberFormat("en-GB").format(Number(value || 0));
 }
 
-function formatPercent(value: number | null | undefined) {
-  return `${Number(value ?? 0).toFixed(1)}%`;
-}
-
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("en-GB", {
     day: "2-digit",
@@ -109,6 +106,7 @@ function formatLongDate(value: string) {
 }
 
 function getMarginTone(margin: number | null | undefined) {
+  if (margin == null) return "text-slate-500";
   const value = Number(margin ?? 0);
 
   if (value >= 30) {
@@ -387,10 +385,10 @@ export default function ReportsPage() {
         const netSales = Number(point.net_sales ?? 0);
 
         if (!canViewFinance) {
-          return Math.max(netSales, 0);
+          return Math.abs(netSales);
         }
 
-        return Math.max(netSales, Number(point.gross_profit ?? 0), 0);
+        return Math.max(Math.abs(netSales), Math.abs(Number(point.gross_profit ?? 0)));
       })
     );
   }, [report, canViewFinance]);
@@ -588,9 +586,7 @@ export default function ReportsPage() {
                 label="Gross Profit"
                 value={<Currency amount={report.summary.gross_profit ?? 0} />}
                 icon={TrendingUp}
-                description={`${formatPercent(
-                  report.summary.gross_margin
-                )} gross margin`}
+                description={`${formatGrossMargin(report.summary.gross_margin, report.summary.net_sales)} gross margin`}
               />
             ) : (
               <StatCard
@@ -730,6 +726,7 @@ export default function ReportsPage() {
                     ) : null}
                   </div>
 
+                  <p className="mb-2 text-xs text-slate-500">Values below the centre line are negative.</p>
                   <div className="overflow-x-auto">
                     <div
                       className="flex h-72 items-end gap-2 border-b border-slate-200 pt-6"
@@ -744,8 +741,8 @@ export default function ReportsPage() {
                         const salesHeight =
                           maxTrendValue > 0
                             ? Math.max(
-                                (Number(point.net_sales) / maxTrendValue) * 220,
-                                Number(point.net_sales) > 0 ? 4 : 0
+                                (Math.abs(Number(point.net_sales)) / maxTrendValue) * 108,
+                                Number(point.net_sales) !== 0 ? 4 : 0
                               )
                             : 0;
 
@@ -754,8 +751,8 @@ export default function ReportsPage() {
                         const profitHeight =
                           canViewFinance && maxTrendValue > 0
                             ? Math.max(
-                                (profitValue / maxTrendValue) * 220,
-                                profitValue > 0 ? 4 : 0
+                                (Math.abs(profitValue) / maxTrendValue) * 108,
+                                profitValue !== 0 ? 4 : 0
                               )
                             : 0;
 
@@ -764,14 +761,17 @@ export default function ReportsPage() {
                             key={point.date}
                             className="group flex min-w-8 flex-1 flex-col items-center justify-end"
                           >
-                            <div className="relative flex h-56 w-full items-end justify-center gap-1">
+                            <div className="relative h-56 w-full">
+                              <div className="absolute inset-x-0 top-1/2 border-t border-slate-400" aria-hidden="true" />
                               <div
                                 title={`Net sales: £${Number(
                                   point.net_sales
                                 ).toFixed(2)}`}
-                                className="w-2.5 rounded-t bg-slate-900 transition-opacity group-hover:opacity-75"
+                                className="absolute right-1/2 mr-0.5 w-2.5 bg-slate-900 transition-opacity group-hover:opacity-75"
                                 style={{
                                   height: `${salesHeight}px`,
+                                  bottom: Number(point.net_sales) >= 0 ? "50%" : undefined,
+                                  top: Number(point.net_sales) < 0 ? "50%" : undefined,
                                 }}
                               />
 
@@ -780,9 +780,11 @@ export default function ReportsPage() {
                                   title={`Gross profit: £${profitValue.toFixed(
                                     2
                                   )}`}
-                                  className="w-2.5 rounded-t bg-slate-300 transition-opacity group-hover:opacity-75"
+                                  className="absolute left-1/2 ml-0.5 w-2.5 bg-slate-300 transition-opacity group-hover:opacity-75"
                                   style={{
                                     height: `${profitHeight}px`,
+                                    bottom: profitValue >= 0 ? "50%" : undefined,
+                                    top: profitValue < 0 ? "50%" : undefined,
                                   }}
                                 />
                               ) : null}
@@ -861,9 +863,9 @@ export default function ReportsPage() {
                     strong
                     value={
                       <span
-                        className={getMarginTone(report.summary.gross_margin)}
+                        className={getMarginTone(report.summary.net_sales > 0 ? report.summary.gross_margin : null)}
                       >
-                        {formatPercent(report.summary.gross_margin)}
+                        {formatGrossMargin(report.summary.gross_margin, report.summary.net_sales)}
                       </span>
                     }
                   />
@@ -952,11 +954,9 @@ export default function ReportsPage() {
                               </td>
 
                               <td
-                                className={`py-3 text-right font-medium ${getMarginTone(
-                                  product.gross_margin
-                                )}`}
+                                className={`py-3 text-right font-medium ${getMarginTone(product.revenue > 0 ? product.gross_margin : null)}`}
                               >
-                                {formatPercent(product.gross_margin)}
+                                {formatGrossMargin(product.gross_margin, product.revenue)}
                               </td>
                             </>
                           ) : null}
@@ -1035,11 +1035,9 @@ export default function ReportsPage() {
                               </td>
 
                               <td
-                                className={`py-3 text-right font-medium ${getMarginTone(
-                                  branchPerformance.gross_margin
-                                )}`}
+                                className={`py-3 text-right font-medium ${getMarginTone(branchPerformance.net_sales > 0 ? branchPerformance.gross_margin : null)}`}
                               >
-                                {formatPercent(branchPerformance.gross_margin)}
+                                {formatGrossMargin(branchPerformance.gross_margin, branchPerformance.net_sales)}
                               </td>
                             </>
                           ) : null}
