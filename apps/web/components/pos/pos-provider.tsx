@@ -4,16 +4,9 @@ import { createContext, ReactNode, useContext, useMemo, useState } from "react";
 
 import type { Customer } from "@/lib/services/customers";
 
-export type PosBasketItem = {
-  id: string;
-  name: string;
-  sku: string;
-  retail_price: number;
-  quantity_available: number;
-  quantity: number;
-};
-
-type AddProductInput = Omit<PosBasketItem, "quantity">;
+import { IdentifierSelector } from "@/components/pos/identifier-selector";
+import { addBasketProduct, decreaseBasketProduct, isTracked, type PosBasketItem, type PosProduct } from "@/lib/pos-basket";
+export type { PosBasketItem } from "@/lib/pos-basket";
 
 type PosContextValue = {
   basket: PosBasketItem[];
@@ -25,9 +18,10 @@ type PosContextValue = {
   selectedCustomer: Customer | null;
   setSelectedCustomer: (customer: Customer | null) => void;
 
-  addProduct: (product: AddProductInput) => void;
+  addProduct: (product: PosProduct) => void;
   increaseQuantity: (id: string) => void;
   decreaseQuantity: (id: string) => void;
+  removeIdentifier: (id: string, identifierId: string) => void;
   removeProduct: (id: string) => void;
   clearBasket: () => void;
   resetSale: () => void;
@@ -41,52 +35,27 @@ export function PosProvider({ children }: { children: ReactNode }) {
     null
   );
 
-  function addProduct(product: AddProductInput) {
-    setBasket((current) => {
-      const existing = current.find((item) => item.id === product.id);
+  const [selectingProduct, setSelectingProduct] = useState<PosProduct | null>(null);
 
-      if (existing) {
-        if (existing.quantity >= existing.quantity_available) {
-          return current;
-        }
-
-        return current.map((item) =>
-          item.id === product.id
-            ? { ...item, quantity: item.quantity + 1 }
-            : item
-        );
-      }
-
-      return [
-        ...current,
-        {
-          ...product,
-          retail_price: Number(product.retail_price),
-          quantity_available: Number(product.quantity_available),
-          quantity: 1,
-        },
-      ];
+  function addProduct(product: PosProduct) {
+    if (isTracked(product)) { setSelectingProduct(product); return; }
+    setBasket(current => {
+      if ((current.find(item => item.id === product.id)?.quantity ?? 0) >= product.quantity_available) return current;
+      return addBasketProduct(current, product);
     });
   }
 
   function increaseQuantity(id: string) {
-    setBasket((current) =>
-      current.map((item) =>
-        item.id === id && item.quantity < item.quantity_available
-          ? { ...item, quantity: item.quantity + 1 }
-          : item
-      )
-    );
+    const product = basket.find(item => item.id === id);
+    if (product) addProduct(product);
   }
 
   function decreaseQuantity(id: string) {
-    setBasket((current) =>
-      current
-        .map((item) =>
-          item.id === id ? { ...item, quantity: item.quantity - 1 } : item
-        )
-        .filter((item) => item.quantity > 0)
-    );
+    setBasket(current => decreaseBasketProduct(current, id));
+  }
+
+  function removeIdentifier(id: string, identifierId: string) {
+    setBasket(current => decreaseBasketProduct(current, id, identifierId));
   }
 
   function removeProduct(id: string) {
@@ -95,10 +64,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
 
   function clearBasket() {
     setBasket([]);
+    setSelectingProduct(null);
   }
 
   function resetSale() {
     setBasket([]);
+    setSelectingProduct(null);
     setSelectedCustomer(null);
   }
 
@@ -135,11 +106,23 @@ export function PosProvider({ children }: { children: ReactNode }) {
         increaseQuantity,
         decreaseQuantity,
         removeProduct,
+        removeIdentifier,
         clearBasket,
         resetSale,
       }}
     >
       {children}
+      {selectingProduct && <IdentifierSelector
+        key={selectingProduct.id}
+        product={selectingProduct}
+        excludedIds={basket.flatMap(item => item.identifiers.map(row => row.id))}
+        remainingQuantity={Math.max(0, selectingProduct.quantity_available - (basket.find(item => item.id === selectingProduct.id)?.quantity ?? 0))}
+        onClose={() => setSelectingProduct(null)}
+        onConfirm={rows => {
+          setBasket(addBasketProduct(basket, selectingProduct, rows));
+          setSelectingProduct(null);
+        }}
+      />}
     </PosContext.Provider>
   );
 }

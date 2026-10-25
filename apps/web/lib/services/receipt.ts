@@ -1,6 +1,13 @@
 import { supabase } from "@/lib/supabase/client";
 
+export type ReceiptIdentifier = {
+  product_serial_id: string;
+  serial_number_snapshot: string | null;
+  imei_snapshot: string | null;
+};
+
 export type ReceiptItem = {
+  identifiers: ReceiptIdentifier[];
   id: string;
   product_id: string;
   product_name: string;
@@ -118,6 +125,15 @@ export async function getReceipt(
     throw new Error(itemsError.message || "Unable to load receipt items.");
   }
 
+  const { data: allocations, error: allocationError } = await supabase
+    .from("sale_item_serials")
+    .select("sale_item_id,product_serial_id,serial_number_snapshot,imei_snapshot")
+    .eq("sale_id", saleId)
+    .eq("organization_id", scope.organizationId)
+    .eq("branch_id", scope.branchId)
+    .order("product_serial_id");
+  if (allocationError) throw new Error("Unable to load receipt identifiers.");
+
   const { data: payments, error: paymentsError } = await supabase
     .from("payments")
     .select(
@@ -159,6 +175,9 @@ export async function getReceipt(
 
     return {
       id: item.id,
+      identifiers: (allocations ?? []).filter(row => row.sale_item_id === item.id).map(row => ({
+        product_serial_id: row.product_serial_id, serial_number_snapshot: row.serial_number_snapshot, imei_snapshot: row.imei_snapshot,
+      })),
       product_id: item.product_id,
       product_name: product?.name ?? "Unknown product",
       sku: product?.sku ?? "-",

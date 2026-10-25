@@ -8,6 +8,7 @@ export function Basket() {
     increaseQuantity,
     decreaseQuantity,
     removeProduct,
+    removeIdentifier,
     clearBasket,
   } = usePos();
 
@@ -46,6 +47,7 @@ export function Basket() {
               onIncrease={increaseQuantity}
               onDecrease={decreaseQuantity}
               onRemove={removeProduct}
+              onRemoveIdentifier={removeIdentifier}
             />
           ))}
         </div>

@@ -1,4 +1,4 @@
-import type { PosBasketItem } from "@/components/pos/pos-provider";
+import { checkoutItems, type PosBasketItem } from "@/lib/pos-basket";
 import { supabase } from "@/lib/supabase/client";
 
 export type PaymentMethod =
@@ -35,10 +35,7 @@ export async function completeSale({
   total,
   notes,
 }: CompleteSaleInput): Promise<CompletedSale> {
-  const items = basket.map((item) => ({
-    product_id: item.id,
-    quantity: item.quantity,
-  }));
+  const items = checkoutItems(basket);
 
   const payments = [
     {

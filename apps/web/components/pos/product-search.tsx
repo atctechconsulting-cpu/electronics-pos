@@ -3,6 +3,7 @@
 import { useAuth } from "@/components/auth-provider";
 import { usePos } from "@/components/pos/pos-provider";
 import { searchPosProducts } from "@/lib/services/pos";
+import type { PosProduct } from "@/lib/pos-basket";
 import { Search } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -11,13 +12,19 @@ export function ProductSearch() {
   const { addProduct } = usePos();
 
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<any[]>([]);
+  const [results, setResults] = useState<PosProduct[]>([]);
   const [loading, setLoading] = useState(false);
 
+  const [error, setError] = useState("");
+
   useEffect(() => {
+    let cancelled = false;
+    setResults([]);
+    setError("");
     async function runSearch() {
       if (!organization || !branch || query.trim().length < 2) {
         setResults([]);
+        setLoading(false);
         return;
       }
 
@@ -26,15 +33,17 @@ export function ProductSearch() {
       try {
         const data = await searchPosProducts(organization.id, branch.id, query);
 
-        setResults(data);
+        if (!cancelled) setResults(data);
+      } catch {
+        if (!cancelled) setError("Unable to search products in this workspace.");
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
 
     const timer = setTimeout(runSearch, 250);
 
-    return () => clearTimeout(timer);
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [query, organization, branch]);
 
   return (
@@ -51,6 +60,7 @@ export function ProductSearch() {
         />
       </div>
 
+      {error && <p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}
       <div className="mt-6 min-h-96">
         {loading ? (
           <div className="flex h-96 items-center justify-center text-slate-400">
@@ -64,18 +74,14 @@ export function ProductSearch() {
           </div>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
-            {results.map((item) => {
-              const product = item.products;
+            {results.map((product) => {
 
               return (
                 <button
                   key={product.id}
                   type="button"
                   onClick={() =>
-                    addProduct({
-                      ...product,
-                      quantity_available: item.quantity_available,
-                    })
+                    addProduct(product)
                   }
                   className="rounded-xl border p-4 text-left hover:border-slate-400 hover:bg-slate-50"
                 >
@@ -91,7 +97,7 @@ export function ProductSearch() {
                     </span>
 
                     <span className="text-xs text-slate-500">
-                      Stock: {item.quantity_available}
+                      Stock: {product.quantity_available}
                     </span>
                   </div>
                 </button>

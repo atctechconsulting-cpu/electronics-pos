@@ -319,6 +319,10 @@ export function ReceiptDialog({ open, saleId, onClose, historyBranchId }: Receip
                           <div className="item-name">{item.product_name}</div>
 
                           <div className="item-meta">SKU: {item.sku}</div>
+                          {item.identifiers.map(identifier => <div key={identifier.product_serial_id} className="item-meta break-all">
+                            {identifier.imei_snapshot && <div>IMEI: {identifier.imei_snapshot}</div>}
+                            {identifier.serial_number_snapshot && <div>Serial: {identifier.serial_number_snapshot}</div>}
+                          </div>)}
 
                           <div className="item-meta">
                             {item.quantity} × £{item.unit_price.toFixed(2)}

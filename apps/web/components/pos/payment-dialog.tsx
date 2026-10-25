@@ -16,6 +16,7 @@ import {
   TriangleAlert,
   X,
 } from "lucide-react";
+import { checkoutItems } from "@/lib/pos-basket";
 import { useState } from "react";
 
 type PaymentDialogProps = {
@@ -52,6 +53,11 @@ export function PaymentDialog({ open, onClose }: PaymentDialogProps) {
       return;
     }
 
+    try { checkoutItems(basket); }
+    catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Check the selected devices.");
+      return;
+    }
     setSubmitting(true);
     setErrorMessage("");
 
