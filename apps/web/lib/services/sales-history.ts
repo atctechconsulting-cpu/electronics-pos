@@ -99,7 +99,7 @@ export async function getSalesHistory({
     )
     .eq("organization_id", organizationId)
     .eq("branch_id", branchId)
-    .eq("status", "COMPLETED")
+    .in("status", ["COMPLETED", "REFUNDED"])
     .order("completed_at", {
       ascending: false,
       nullsFirst: false,
