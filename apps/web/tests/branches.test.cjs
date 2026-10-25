@@ -6,7 +6,7 @@ const vm = require('node:vm');
 const { test } = require('node:test');
 const ts = require('typescript');
 const root = path.resolve(__dirname, '../../..');
-const read = p => fs.readFileSync(path.join(root, p), 'utf8');
+const read = p => fs.readFileSync(path.join(root, p), 'utf8').replace(/\r\n/g, '\n');
 const sql = read('supabase/migrations/20260924040358_branches_v1.sql');
 function fn(name) {
   const start = sql.indexOf(`create function public.${name}(`);
