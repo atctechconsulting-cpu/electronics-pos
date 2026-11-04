@@ -234,6 +234,14 @@ export async function receivePurchaseOrderGoods(
   return data as ReceivePurchaseOrderResult;
 }
 
+async function purchasingProjection(scope: WorkspaceScope, ids: string[]) {
+  const { data, error } = await supabase.rpc("get_purchasing_projection", {
+    p_organization_id: scope.organizationId, p_branch_id: scope.branchId, p_order_ids: ids,
+  });
+  if (error || !data) throw new Error("Unable to load authorised purchasing values.");
+  return data as { orders: Array<Record<string, any>>; items: Array<Record<string, any>> };
+}
+
 export async function getPurchaseOrders(
   scope: WorkspaceScope
 ): Promise<PurchaseOrderRow[]> {
@@ -254,10 +262,6 @@ export async function getPurchaseOrders(
       expected_delivery_date,
       ordered_at,
       received_at,
-      subtotal,
-      tax_amount,
-      discount_amount,
-      total_amount,
       notes,
       created_at,
       supplier_id,
@@ -275,7 +279,12 @@ export async function getPurchaseOrders(
     throw new Error(error.message || "Unable to load purchase orders.");
   }
 
-  return (data ?? []).map(mapPurchaseOrderRow);
+  const projection = await purchasingProjection(scope, (data ?? []).map(row => row.id));
+  return (data ?? []).map(row => {
+    const values = projection.orders.find(value => value.id === row.id);
+    if (!values) throw new Error("Purchasing values unavailable.");
+    return mapPurchaseOrderRow({ ...row, ...values });
+  });
 }
 
 export async function getPurchaseOrderDetails(
@@ -303,10 +312,6 @@ export async function getPurchaseOrderDetails(
         expected_delivery_date,
         ordered_at,
         received_at,
-        subtotal,
-        tax_amount,
-        discount_amount,
-        total_amount,
         notes,
         created_at,
         supplier_id,
@@ -343,10 +348,6 @@ export async function getPurchaseOrderDetails(
         product_id,
         quantity,
         received_quantity,
-        cost_price,
-        tax_rate,
-        discount_rate,
-        line_total,
         products (
           name,
           sku,
@@ -364,10 +365,18 @@ export async function getPurchaseOrderDetails(
     );
   }
 
+  const projection = await purchasingProjection(scope, [purchaseOrder.id]);
+  const values = projection.orders.find(value => value.id === purchaseOrder.id);
+  if (!values) throw new Error("Purchasing values unavailable.");
+  const projectedItems = (items ?? []).map(item => {
+    const financial = projection.items.find(value => value.id === item.id);
+    if (!financial) throw new Error("Purchasing item values unavailable.");
+    return { ...item, ...financial };
+  });
   return {
-    ...mapPurchaseOrderRow(purchaseOrder),
+    ...mapPurchaseOrderRow({ ...purchaseOrder, ...values }),
 
-    items: (items ?? []).map((item: any) => ({
+    items: projectedItems.map((item: any) => ({
       id: item.id,
       product_id: item.product_id,
       product_name: item.products?.name ?? "Unknown product",

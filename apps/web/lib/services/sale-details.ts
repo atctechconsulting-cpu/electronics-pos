@@ -11,7 +11,6 @@ export type SaleDetailItem = {
   remaining_returnable: number;
 
   unit_price: number;
-  unit_cost: number;
   discount_amount: number;
   vat_amount: number;
   line_total: number;
@@ -142,7 +141,6 @@ export async function getSaleDetails(
         product_id,
         quantity,
         unit_price,
-        unit_cost,
         discount_amount,
         vat_amount,
         line_total,
@@ -319,7 +317,6 @@ export async function getSaleDetails(
       remaining_returnable: remainingReturnable,
 
       unit_price: Number(item.unit_price),
-      unit_cost: Number(item.unit_cost),
       discount_amount: Number(item.discount_amount),
       vat_amount: Number(item.vat_amount),
       line_total: Number(item.line_total),

@@ -34,6 +34,34 @@ export type StaffMember = {
   roles: StaffRoleAssignment[];
 };
 
+export type StaffInvitationStatus = {
+  user_id: string;
+  pending: boolean;
+  eligible: boolean;
+  retry_after: string | null;
+};
+
+export async function getStaffInvitationStatus(organizationId: string): Promise<StaffInvitationStatus[]> {
+  const { data, error } = await supabase.rpc("get_staff_invitation_status", { p_org: organizationId });
+  if (error) throw new Error("Resend unavailable. Refresh Staff to check invitation status.");
+  return data ?? [];
+}
+
+export async function resendStaffInvitation(organizationId: string, userId: string): Promise<string> {
+  const { data: { session }, error } = await supabase.auth.getSession();
+  if (error || !session) throw new Error("Your session has expired. Please sign in again.");
+  const response = await fetch("/api/staff/resend-invite", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+    body: JSON.stringify({ organizationId, userId }),
+  });
+  const result = await response.json().catch(() => null);
+  if (!response.ok || !result?.success) {
+    throw new Error(result?.error ?? "Resend could not be confirmed. Refresh Staff before retrying.");
+  }
+  return result.message;
+}
+
 export type StaffAdministrationRole = {
   id: string;
   name: string;

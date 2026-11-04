@@ -1,3 +1,4 @@
+import { withCosts } from "@/lib/services/financial-projections";
 import { supabase } from "@/lib/supabase/client";
 
 export async function getInventory(organizationId: string, branchId: string) {
@@ -5,7 +6,7 @@ export async function getInventory(organizationId: string, branchId: string) {
     .from("inventory")
     .select(
       `
-      *,
+      id,organization_id,branch_id,product_id,quantity_on_hand,quantity_reserved,quantity_available,created_at,updated_at,
       products:product_id (
         id,
         name,
@@ -25,5 +26,5 @@ export async function getInventory(organizationId: string, branchId: string) {
 
   if (error) throw error;
 
-  return data;
+  return withCosts(data ?? [], organizationId, branchId, "inventory", "average_cost");
 }

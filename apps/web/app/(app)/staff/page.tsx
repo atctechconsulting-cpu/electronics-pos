@@ -28,7 +28,10 @@ import {
 import {
   getOrganizationStaff,
   getStaffAdministrationOptions,
+  getStaffInvitationStatus,
+  resendStaffInvitation,
   setStaffActiveStatus,
+  type StaffInvitationStatus,
   type StaffAdministrationOptions,
   type StaffMember,
 } from "@/lib/services/staff";
@@ -52,6 +55,11 @@ export default function StaffPage() {
   const [statusTarget, setStatusTarget] = useState<StaffMember | null>(null);
   const [savingStatus, setSavingStatus] = useState(false);
   const [statusError, setStatusError] = useState<string | null>(null);
+  const [invitations, setInvitations] = useState<StaffInvitationStatus[]>([]);
+  const [invitationError, setInvitationError] = useState<string | null>(null);
+  const [resending, setResending] = useState<string | null>(null);
+  const [resendMessages, setResendMessages] = useState<Record<string, string>>({});
+  const [now, setNow] = useState(() => Date.now());
 
   const loadStaff = useCallback(async () => {
     if (!organization?.id) {
@@ -61,6 +69,8 @@ export default function StaffPage() {
     try {
       setLoading(true);
       setError(null);
+      setInvitations([]);
+      setInvitationError(null);
 
       const [staffData, optionsData] = await Promise.all([
         getOrganizationStaff(organization.id),
@@ -69,6 +79,13 @@ export default function StaffPage() {
 
       setStaff(staffData);
       setOptions(optionsData);
+      if (optionsData.can_manage_staff && optionsData.can_manage_roles) {
+        try {
+          setInvitations(await getStaffInvitationStatus(organization.id));
+        } catch {
+          setInvitationError("Resend unavailable. Refresh Staff to check invitation status.");
+        }
+      }
     } catch (err) {
       console.error("Failed to load staff:", err);
 
@@ -85,6 +102,28 @@ export default function StaffPage() {
   useEffect(() => {
     void loadStaff();
   }, [loadStaff]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  async function resendInvitation(userId: string) {
+    if (!organization || resending || !options?.can_manage_staff || !options.can_manage_roles) return;
+    setResending(userId);
+    setResendMessages(current => ({ ...current, [userId]: "Sending invitation..." }));
+    try {
+      const message = await resendStaffInvitation(organization.id, userId);
+      setResendMessages(current => ({ ...current, [userId]: message }));
+    } catch (err) {
+      setResendMessages(current => ({ ...current, [userId]: err instanceof Error
+        ? err.message : "Resend could not be confirmed. Refresh Staff before retrying." }));
+    } finally {
+      await loadStaff();
+      setResending(null);
+      setNow(Date.now());
+    }
+  }
 
   const activeStaff = useMemo(
     () => staff.filter((member) => member.is_active),
@@ -214,6 +253,7 @@ export default function StaffPage() {
           }
         />
 
+        {invitationError ? <p role="alert" className="text-sm text-amber-700">{invitationError}</p> : null}
         {error ? (
           <div className="rounded-xl border border-red-200 bg-red-50 p-4">
             <div className="flex items-start gap-3">
@@ -475,6 +515,27 @@ export default function StaffPage() {
                           <p className="mt-1 text-xs text-slate-500">
                             Organisation: {member.organization_is_active ? "Active" : "Inactive"}
                           </p>
+                          {options?.can_manage_staff && options.can_manage_roles && (() => {
+                            const invitation = invitations.find(item => item.user_id === member.user_id);
+                            if (!invitation) return null;
+                            const coolingDown = invitation.retry_after !== null && Date.parse(invitation.retry_after) > now;
+                            return (
+                              <div className="mt-3 max-w-xs text-xs text-slate-600">
+                                <p>{invitation.pending ? "Invitation pending" : "Resend unavailable — use login/password recovery."}</p>
+                                {invitation.pending && invitation.eligible ? (
+                                  <button type="button" onClick={() => void resendInvitation(member.user_id)}
+                                    disabled={resending !== null || coolingDown}
+                                    className="mt-2 rounded-lg border px-3 py-2 font-medium hover:bg-slate-100 disabled:opacity-50">
+                                    {resending === member.user_id ? "Sending..." : "Resend Invitation"}
+                                  </button>
+                                ) : invitation.pending ? <p>Resend unavailable — account or organisation access is inactive.</p> : null}
+                                {coolingDown && invitation.pending && invitation.eligible ? (
+                                  <p className="mt-1">Resend unavailable until {new Date(invitation.retry_after!).toLocaleTimeString("en-GB")}.</p>
+                                ) : null}
+                              </div>
+                            );
+                          })()}
+                          {resendMessages[member.user_id] ? <p role="status" className="mt-2 max-w-xs text-xs text-slate-600">{resendMessages[member.user_id]}</p> : null}
                           {options?.can_manage_staff ? (
                             <button
                               type="button"

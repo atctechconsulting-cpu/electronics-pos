@@ -77,6 +77,7 @@ export function EditProductDialog({
     try {
       await updateProduct(product.id, {
         ...form,
+        cost_price: product.cost_price == null ? undefined : form.cost_price,
         category_id: form.category_id || null,
         brand_id: form.brand_id || null,
         supplier_id: form.supplier_id || null,
@@ -210,7 +211,7 @@ export function EditProductDialog({
                   />
                 </div>
 
-                <div>
+                {product.cost_price != null && <div>
                   <label className="text-sm font-medium">Cost price</label>
                   <input
                     type="number"
@@ -224,7 +225,7 @@ export function EditProductDialog({
                       })
                     }
                   />
-                </div>
+                </div>}
 
                 <div>
                   <label className="text-sm font-medium">Retail price</label>

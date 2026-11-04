@@ -1,3 +1,4 @@
+import { withCosts } from "@/lib/services/financial-projections";
 import { supabase } from "@/lib/supabase/client";
 
 export async function getStockMovements(
@@ -8,7 +9,7 @@ export async function getStockMovements(
     .from("stock_movements")
     .select(
       `
-      *,
+      id,organization_id,branch_id,product_id,movement_type,quantity,reference,notes,created_by,created_at,
       products:product_id (
         id,
         name,
@@ -22,5 +23,5 @@ export async function getStockMovements(
 
   if (error) throw error;
 
-  return data;
+  return withCosts(data ?? [], organizationId, branchId, "stock_movements", "unit_cost");
 }

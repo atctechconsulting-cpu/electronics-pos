@@ -32,7 +32,6 @@ type Product = {
   name: string;
   sku: string;
   cost_price: number | string | null;
-  selling_price: number | string | null;
   is_active: boolean;
 };
 
@@ -67,7 +66,7 @@ export default function NewPurchaseOrderPage() {
 
   useEffect(() => {
     async function loadPageData() {
-      if (!organization?.id) {
+      if (!organization?.id || !branch?.id) {
         return;
       }
 
@@ -77,7 +76,7 @@ export default function NewPurchaseOrderPage() {
       try {
         const [supplierData, productData] = await Promise.all([
           getSuppliers(organization.id),
-          getProducts(organization.id),
+          getProducts(organization.id, branch.id),
         ]);
 
         setSuppliers((supplierData ?? []) as Supplier[]);
@@ -99,7 +98,7 @@ export default function NewPurchaseOrderPage() {
     }
 
     void loadPageData();
-  }, [organization?.id]);
+  }, [organization?.id, branch?.id]);
 
   const filteredProducts = useMemo(() => {
     const search = productSearch.trim().toLowerCase();

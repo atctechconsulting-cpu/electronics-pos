@@ -105,7 +105,7 @@ export default function InventoryPage() {
     },
     {
       label: "Inventory Value",
-      value: `£${totalInventoryValue.toFixed(2)}`,
+      value: hasPermission("finance.view") && items.every(item => item.average_cost != null) ? `£${totalInventoryValue.toFixed(2)}` : "—",
       icon: Wallet,
     },
     {
@@ -239,14 +239,12 @@ export default function InventoryPage() {
 
                     <td className="p-4">{item.quantity_available}</td>
 
-                    <td className="p-4">£{item.average_cost}</td>
+                    <td className="p-4">{item.average_cost == null ? "—" : `£${item.average_cost}`}</td>
 
                     <td className="p-4">
-                      £
-                      {(
-                        Number(item.quantity_on_hand ?? 0) *
-                        Number(item.average_cost ?? 0)
-                      ).toFixed(2)}
+                      {item.average_cost == null ? "—" : `£${(
+                        Number(item.quantity_on_hand ?? 0) * Number(item.average_cost)
+                      ).toFixed(2)}`}
                     </td>
 
                     <td className="p-4">£{item.products?.retail_price}</td>
