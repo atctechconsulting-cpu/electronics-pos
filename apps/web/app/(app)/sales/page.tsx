@@ -1,5 +1,7 @@
 "use client";
 
+import { ReportExportDialog } from "@/components/reports/report-export-dialog";
+
 import { Eye, ReceiptText, Search } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
@@ -115,6 +117,8 @@ export default function SalesHistoryPage() {
             View completed sales and reprint customer receipts.
           </p>
         </div>
+
+        <ReportExportDialog kind="sales" historyBranch={historyBranch} search={search} />
 
         <div className="rounded-xl border bg-white shadow-sm">
           <div className="border-b p-4">

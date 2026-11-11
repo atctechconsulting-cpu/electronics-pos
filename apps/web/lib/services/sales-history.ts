@@ -1,3 +1,4 @@
+import type { ExportPage } from "@/lib/services/export-pagination";
 import { supabase } from "@/lib/supabase/client";
 
 export type SalesHistoryRecord = {
@@ -45,12 +46,14 @@ export type SalesWorkspaceScope = {
 
 type GetSalesHistoryInput = SalesWorkspaceScope & {
   search?: string;
+  exportPage?: ExportPage;
 };
 
 export async function getSalesHistory({
   organizationId,
   branchId,
   search = "",
+  exportPage,
 }: GetSalesHistoryInput): Promise<SalesHistoryRecord[]> {
   if (!organizationId || !branchId) {
     return [];
@@ -95,7 +98,8 @@ export async function getSalesHistory({
         amount,
         reference
       )
-    `
+    `,
+      exportPage ? { count: "exact" } : {}
     )
     .eq("organization_id", organizationId)
     .eq("branch_id", branchId)
@@ -103,8 +107,15 @@ export async function getSalesHistory({
     .order("completed_at", {
       ascending: false,
       nullsFirst: false,
-    })
-    .limit(100);
+    });
+
+  if (exportPage) {
+    query = query.order("id", { ascending: false }).range(exportPage.offset, exportPage.offset + exportPage.size - 1);
+    if (exportPage.start) query = query.gte("completed_at", exportPage.start);
+    if (exportPage.end) query = query.lt("completed_at", exportPage.end);
+  } else {
+    query = query.limit(100);
+  }
 
   const trimmedSearch = search.trim();
 
@@ -112,7 +123,8 @@ export async function getSalesHistory({
     query = query.ilike("receipt_number", `%${trimmedSearch}%`);
   }
 
-  const { data, error } = await query;
+  const { data, error, count } = await query;
+  exportPage?.reportCount(count);
 
   if (error) {
     console.error("Failed to load sales history:", error);

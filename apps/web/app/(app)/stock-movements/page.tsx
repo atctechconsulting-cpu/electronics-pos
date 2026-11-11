@@ -1,5 +1,7 @@
 "use client";
 
+import { ReportExportDialog } from "@/components/reports/report-export-dialog";
+
 import { useAuth } from "@/components/auth-provider";
 import { getStockMovements } from "@/lib/services/stock-movements";
 import { ArrowRightLeft } from "lucide-react";
@@ -59,6 +61,8 @@ export default function StockMovementsPage() {
           branch.
         </p>
       </div>
+
+      <ReportExportDialog kind="movements" />
 
       {error ? (
         <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">

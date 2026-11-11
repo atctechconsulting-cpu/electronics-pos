@@ -1,5 +1,7 @@
 "use client";
 
+import { ReportExportDialog } from "@/components/reports/report-export-dialog";
+
 import { useAuth } from "@/components/auth-provider";
 import { ReceiveStockDialog } from "@/components/inventory/receive-stock-dialog";
 import { getInventory } from "@/lib/services/inventory";
@@ -130,9 +132,12 @@ export default function InventoryPage() {
           </p>
         </div>
 
-        {canManageInventory && !contextBusy ? (
-          <ReceiveStockDialog onSuccess={loadInventory} />
-        ) : null}
+        <div className="flex flex-wrap items-center gap-2">
+          <ReportExportDialog kind="inventory" search={search} />
+          {canManageInventory && !contextBusy ? (
+            <ReceiveStockDialog onSuccess={loadInventory} />
+          ) : null}
+        </div>
       </div>
 
       {error ? (
